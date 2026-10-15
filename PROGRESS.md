@@ -62,25 +62,73 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 
 ## 3. Modul Dosing (`process.h` § DOSING, `motor.h`, `presetops.h`)
 
+Spesifikasi rinci: **`dosing-design.md`** — matematika dosing, kalibrasi
+gravimetrik, error budget, prime/anti-drip, dan daftar koreksi desain
+(vs `PROCESS.md` §6 dan `etching-otomatis.md` §4).
+
+### 3.1 Sudah ada
+
 - [x] ✅ Driver stepper non-blocking (puls STEP tiap `LANGKAH_INTERVAL_US`) (`motor.h:50`)
 - [x] ✅ Konversi ml → jumlah langkah (`targetLangkah = ml × langkahPerMl`) (`motor.h:34`)
-- [x] ✅ 3 pompa (HCl/H2O2/H2O) dijalankan **paralel** saat fase DOSING (`process.h:28-33`)
+- [x] ✅ 3 pompa (HCl/H2O2/H2O) menjalankan **paralel** saat fase DOSING (`process.h:28-33`)
 - [x] ✅ `pompaMulai()` / `pompaStopAll()` / `pompaSelesai()` tersedia
 - [x] ✅ Hitung otomatis %H2O dan ml tiap bahan dari %HCl/%H2O2 + volume (`presetops.h:17`)
 - [x] ✅ Validasi rentang semua field preset (`presetops.h:49`)
 - [x] ✅ Halaman kalibrasi stepper: uji pompa + set ml/rotasi (`ino:222`)
-- [ ] ⚠️ `langkahPerMl` **hardcode `{1200,1200,1200}`** — hasil asumsi DRV8825 7200 step/rev (`motor.h:14`)
-- [ ] ⚠️ `kalibStepperMl[]` diubah dari UI tapi **tidak pernah dipakai** `pompaMulai()` (`data.h:99`, `ino:231`)
-- [ ] ⬜ `langkahPerMl = stepPerRev / mlPerRotasi` (mikrostep TMC2209)
-- [ ] ⬜ Simpan kalibrasi ml/rotasi ke NVS (key `pompa`, `FORMAT_VERSI_KALIB` → 2)
-- [ ] ⬜ Fase `FASE_CEK` pre-flight: validasi sensor & volume tangki
-- [ ] ⬜ Hitung ml yang dibutuhkan = target − sisa cairan di tangki (dari sensor)
-- [ ] ⬜ Cek ketersediaan cairan → `ERR_LEVEL_KURANG` sebelum pompa nyala
-- [ ] ⬜ Selesai dosing berbasis kondisi (saat ini masih berbasis fraksi waktu)
-- [ ] ⬜ Deteksi pompa macet (langkah tidak bertambah > 3 s)
-- [ ] ⬜ Watchdog timeout dosing (90 s)
-- [ ] ⬜ Naikkan `STEP_INTERVAL_US` 400 → 1200 µs (aman 3 pompa paralel)
+
+### 3.2 Ada tapi belum fungsional
+
+- [ ] ⚠️ `langkahPerMl` **hardcode `{1200,1200,1200}`** — sisa asumsi DRV8825 7200 step/rev (`motor.h:14`)
+- [ ] ⚠️ `kalibStepperMl[]` diubah dari UI tapi **tidak pernah dipakai** `pompaMulai()` (`data.h:99`, `ino:231`) → akurasi dosing saat ini nol
+- [ ] ⚠️ `sensor_extra.h` (isi `langkahPerMlX1000` + `pompaTerapkanKalibrasi()`) **tidak di-`#include` siapa pun** → kode mati (`sensor_extra.h:62-80`)
+- [ ] ⚠️ Fase DOSING selesai berdasarkan **fraksi waktu** (10% `totalDetik`), bukan kondisi pompa → pompa bisa meleset ke ETCHING (`process.h:70-75`)
+- [ ] ⚠️ Logika "ml dibutuhkan" di `PROCESS.md` §6 terbalik: `butuh = target − tersedia` + guard `butuh > tersedia`
+- [ ] ⚠️ Watchdog 90 s bisa **lebih pendek dari dosis yang sah** (300 ml butuh 230–1150 s pada laju sekarang)
+- [ ] ⚠️ "Deteksi macet" tidak mungkin bekerja: `jalanLangkah[]` naik tiap pulsa tanpa umpan balik motor
+- [ ] ⚠️ `kalibMotorRunning` diset `true` tapi tidak pernah dibaca → uji pompa tak pernah auto-stop (`data.h:111`)
+- [ ] ⚠️ Halaman kalibrasi stepper masih memakai `delay()` saat uji pompa (`ino:239`)
+- [ ] ⚠️ `sensor_extra.h` tidak tersimpan ke NVS sama sekali (`DataKalib` hanya menyimpan titik sensor level, `storage.h:78-85`)
+
+### 3.3 Perlu dikerjakan (urutan implementasi `dosing-design.md` §10)
+
+**Konstanta & hardware**
+
+- [ ] ⬜ `TMC_MICROSTEP` + `STEPPER_STEP_PER_REV` di `config.h` (ganti asumsi 1/36 yang tidak mungkin)
+- [ ] ⬜ Dosing **ditolak** (`ERR_POMPA_KALIB`) selama `pompaValid[i] == false`
 - [ ] ⬜ Volume tangki (`VOL_TANGKI_*`) sebagai data, bukan `#define` statis
+
+**Motor (`motor.h`)**
+
+- [ ] ⬜ `langkahPerMl[i] = stepPerRev / mlPerRotasi[i]`, diterapkan setiap kalibrasi disimpan
+- [ ] ⬜ `pompaMlTerkira(i)` / `pompaProgres(i)` / `pompaSemuaSelesai()`
+- [ ] ⬜ Guard `DOSE_MIN`/`DOSE_MAX` per pompa
+- [ ] ⬜ `pompaStopAll()` + `TMC_PDN` LOW sebagai jalan keluar tunggal
+
+**Proses (`process.h`)**
+
+- [ ] ⬜ `FASE_CEK` pre-flight: sensor terbaca, tangki terkalibrasi, pompa terkalibrasi
+- [ ] ⬜ Cek ketersediaan cairan → `ERR_LEVEL_KURANG` **sebelum** pompa nyala
+- [ ] ⬜ Guard `ERR_SUMBER_HABIS` saat dosing sedang berjalan
+- [ ] ⬜ Selesai dosing berbasis kondisi (hapus `faseDariFrac()` untuk dosing)
+- [ ] ⬜ Watchdog **dinamis** `dosisWatchdogMs()` dari laju nyata, bukan konstanta 90 s
+- [ ] ⬜ `DeteksiJekot` (langkah datar > 3 s) — ganti nama "deteksi macet"
+- [ ] ⬜ Prime selang (`PRIME_STEPS`) sebelum dosis dihitung
+- [ ] ⬜ Anti-drip: balik `DIR` `ANTI_DRIP_STEPS` setelah pompa selesai
+- [ ] ⬜ Jeda = pompa freeze, resume dari langkah tersisa (bukan reset ke 0)
+- [ ] ⬜ Volume bilasan lewat jalur dosing terkalibrasi (100 ml → `ML_BILASAN`)
+
+**Preset (`presetops.h`)**
+
+- [ ] ⬜ `hitungUlang()` bulatkan ke terdekat — error pembulatan tidak jatuh seluruhnya ke H2O
+- [ ] ⬜ `validasiPreset()` tolak sisa pembulatan > 2 ml
+
+**Kalibrasi & penyimpanan**
+
+- [ ] ⬜ Wizard kalibrasi gravimetrik: target uji → volume aktual (timbangan) → `langkahPerMl`
+- [ ] ⬜ Auto-stop uji pompa berbasis `millis()` (ganti `delay()`)
+- [ ] ⬜ `DataKalib` versi 2: `mlPerRotasiX100[3]` + `pompaValid[3]` + CRC (satu blob, bukan key baru)
+- [ ] ⬜ Simpan **tanggal kalibrasi** + peringatan "Kalibrasi sudah > 30 hari"
+- [ ] ⬜ Kalibrasi dilakukan pada kondisi nyata: motor hangat, ketinggian tangki proses sebenarnya
 
 ---
 
@@ -208,8 +256,11 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 - [x] ✅ `water-level-sensor-plan.md` — rencana sensor level non-contact
 - [x] ✅ `PROCESS.md` — rencana detail 5 modul proses + cara kerja + pin map TMC2209
 - [x] ✅ `PROGRESS.md` — checklist status implementasi (dokumen ini)
+- [x] ✅ `dosing-design.md` — desain rinci modul dosing: matematika ml→langkah, kalibrasi gravimetrik, error budget, prime/anti-drip, koreksi desain
 - [ ] ⬜ Update `SUMMARY.md` agar sinkron dengan pin map TMC2209 & fitur baru
+- [ ] ⬜ Koreksi `PROCESS.md` §6 sesuai `dosing-design.md` §2 (logika ml terbalik, watchdog dinamis, nama "deteksi macet")
 - [ ] ⬜ Update `LOG.md` / naikkan versi firmware untuk setiap fitur baru
+- [ ] ⬜ Tandai `etching-otomatis.md` §2 & §4 sebagai superseded (`PROCESS.md` §1.2 & `dosing-design.md`)
 
 ---
 
@@ -217,7 +268,11 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 
 - [ ] ⬜ Uji 5 sensor touch di jerican kosong vs terisi (repeatability < 5%)
 - [ ] ⬜ Verifikasi address DS18B20 fisik cocok dengan `sensor.h:119`
-- [ ] ⬜ Timbang air: 3 pompa × 3 ulangan → error ≤ 5% dari target
+- [ ] ⬜ **Uji laju step lebih dulu**: 10 000 langkah per pompa, bandingkan waktu aktual vs teoritis, deteksi miss step (`dosing-design.md` §10.1)
+- [ ] ⬜ Kalibrasi gravimetrik: 3 pompa × 3 ulangan (50 ml) → repeatability ≤ 3%
+- [ ] ⬜ Uji dosis besar 300 ml → error ≤ 5% dari target
+- [ ] ⬜ Uji prime & anti-drip: tidak ada cairan keluar sebelum dosing / setelah pompa selesai
+- [ ] ⬜ Uji dengan larutan encer (HCl 10%) → error ≤ 5% (viskositas berbeda)
 - [ ] ⬜ Uji driver TMC2209 3 channel (STEP/DIR/EN/PDN) dengan pin map baru
 - [ ] ⬜ Uji respons E-stop (target < 5 ms dari_LOW ke semua output mati)
 - [ ] ⬜ Uji drain: volume larutan terbuang habis dalam `T_DRAINING_MS`
@@ -232,17 +287,17 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 
 | Kategori | ✅ | ⚠️ | ⬜ |
 |---|---|---|---|
-| GPIO & Hardware | 9 | 0 | 4 |
-| Modul UI | 16 | 0 | 12 |
-| Modul Dosing | 8 | 2 | 9 |
-| Modul Etching | 5 | 1 | 6 |
-| Modul Draining & Rinsing | 5 | 3 | 6 |
-| Modul Emergency Stop | 8 | 0 | 10 |
-| Sensor & Kalibrasi | 14 | 5 | 3 |
-| Penyimpanan & Data | 7 | 0 | 5 |
+| GPIO & Hardware | 10 | 0 | 6 |
+| Modul UI | 15 | 0 | 12 |
+| Modul Dosing | 7 | 10 | 24 |
+| Modul Etching | 5 | 1 | 8 |
+| Modul Draining & Rinsing | 5 | 2 | 6 |
+| Modul Emergency Stop | 7 | 0 | 12 |
+| Sensor & Kalibrasi | 12 | 5 | 3 |
+| Penyimpanan & Data | 7 | 0 | 4 |
 | Infrastruktur | 5 | 0 | 5 |
-| Dokumentasi | 6 | 0 | 2 |
-| Uji Hardware | 0 | 0 | 10 |
+| Dokumentasi | 6 | 0 | 4 |
+| Uji Hardware | 0 | 0 | 14 |
 
 **Total: 83 ✅ · 11 ⚠️ · 72 ⬜**
 
@@ -250,6 +305,14 @@ Status keseluruhan: **prototype berfungsi penuh pada jalur happy-path** (menu,
 preset, dosing, agitasi, drain, e-stop dasar), tetapi **belum ada proteksi proses**
 (watchdog, validasi level, latch e-stop, proteksi suhu/gas) dan **akurasi dosing
 belum memakai hasil kalibrasi**.
+
+Angka pada tabel Ringkasan dihitung ulang langsung dari isi checklist —
+versi sebelumnya (83/11/72) tidak cocok dengan isi checklistnya.
+
+Kondisi khusus dosing: **10 item ⚠️** — di antaranya fase DOSING yang selesai
+berdasarkan fraksi waktu (bukan kondisi pompa), hasil kalibrasi ml/rotasi yang
+tidak pernah dipakai, dan `sensor_extra.h` yang merupakan kode mati. Rincian
+desain serta urutan perbaikannya ada di `dosing-design.md`.
 
 ---
 
