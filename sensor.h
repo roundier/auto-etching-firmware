@@ -1,5 +1,7 @@
 #pragma once
 #include <Arduino.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 #include "config.h"
 #include "data.h"
 
@@ -103,4 +105,125 @@ void sensorSetPenuh(int i) {
 
 void levelMasuk() {
   levelScroll = 0;
+}
+
+// ================= SENSOR SUHU (DS18B20 x3, 1-Wire) =================
+// Satu bus 1-Wire di PIN_DS18B20, tiga sensor dibedakan lewat DeviceAddress.
+// Blok "Suhu Motor / Komponen / Chamber" masing-masing menunjuk ke salah satu
+// address lewat kalibSuhuAddr[] (1..3) -> sensorAddress[alamat-1].
+// Offset per blok (x10 °C) dihimpun dari kalibrasi KIRI/KANAN.
+
+OneWire ds18Bus(PIN_DS18B20);
+DallasTemperature ds18(&ds18Bus);
+
+DeviceAddress sensorAddress[3] = {
+  { 0x28, 0xB8, 0xEF, 0x87, 0x3A, 0x25, 0x02, 0x64 },
+  { 0x28, 0x80, 0x77, 0x48, 0x3A, 0x25, 0x02, 0x02 },
+  { 0x28, 0x8E, 0xFD, 0x23, 0x39, 0x25, 0x02, 0x87 }
+};
+
+// address terpilih per blok (1..3, index 0 = sensorAddress[0])
+int kalibSuhuAddr[JUMLAH_SUHU] = { 1, 2, 3 };
+
+// offset kalibrasi per blok (x10 °C)
+float suhuOffsetX10[JUMLAH_SUHU] = { 0, 0, 0 };
+
+bool ds18Siap = false;
+
+void sensorSuhuInit() {
+  analogReadResolution(12);                // ADC MQ-135 12-bit (0..4095)
+  ds18.begin();
+  // Resolusi 12-bit per sensor (mengikuti sketch referensi DS18B20_3pcs).
+  for (int s = 0; s < 3; s++) ds18.setResolution(sensorAddress[s], 12);
+  ds18.setWaitForConversion(false);       // konversi di latar belakang, UI tetap responsif
+  int jumlah = ds18.getDeviceCount();
+  ds18Siap = (jumlah >= 1);
+  dbg.print(F("[SUHU] DS18B20 ditemukan: "));
+  dbg.print(jumlah);
+  dbg.println(ds18Siap ? F(" sensor") : F(" (tidak ada)"));
+  // Cocokkan address hasil scan dengan address yang diharapkan (urutan).
+  for (int s = 0; s < 3; s++) {
+    bool ketemu = false;
+    for (int i = 0; i < jumlah; i++) {
+      DeviceAddress a;
+      if (!ds18.getAddress(a, i)) continue;
+      if (memcmp(a, sensorAddress[s], 8) == 0) { ketemu = true; break; }
+    }
+    dbg.print(F("[SUHU]  sensor"));
+    dbg.print(s + 1);
+    dbg.println(ketemu ? F(" OK") : F(" TIDAK DITEMUKAN"));
+  }
+}
+
+// ===== Konversi non-blocking =====
+// requestTemperatures() secara default memblokir ~750 ms; selama itu tombol dan
+// render UI berhenti, sehingga halaman terasa macet. Dengan
+// setWaitForConversion(false), fungsi itu hanya menyalakan bit convert lalu
+// langsung kembali: konversi berjalan di latar belakang dan dicek lewat
+// isConversionComplete().
+
+void sensorSuhuRequest() {
+  if (!ds18Siap) return;
+  ds18.requestTemperatures();          // tidak memblokir
+}
+
+unsigned long sensorSuhuMs = 0;
+const unsigned long INTERVAL_SUHU_MS = 1000;
+bool suhuDataBaru = false;
+
+// Panggil tiap loop(): mulai konversi baru lalu tandai data baru saat selesai.
+void sensorSuhuUpdate() {
+  if (!ds18Siap) return;
+  if (!ds18.isConversionComplete()) return;   // konversi lama masih jalan
+  unsigned long now = millis();
+  if (now - sensorSuhuMs < INTERVAL_SUHU_MS) return;
+  sensorSuhuMs = now;
+  sensorSuhuRequest();
+  suhuDataBaru = true;
+}
+
+// true tepat setelah konversi selesai; pemicu redraw UI.
+bool sensorSuhuSiapTampil() {
+  if (!suhuDataBaru) return false;
+  suhuDataBaru = false;
+  return true;
+}
+
+// Baca suhu (°C) untuk blok idx dari cache terakhir.
+float sensorSuhuRaw(int idx) {
+  if (!ds18Siap) return -127.0f;
+  int slot = constrain(kalibSuhuAddr[idx], 1, 3) - 1;
+  return ds18.getTempC(sensorAddress[slot]);
+}
+
+// Suhu ternormalisasi = bacaan + offset kalibrasi blok tsb.
+float sensorSuhu(int idx) {
+  float raw = sensorSuhuRaw(idx);
+  if (raw <= -100.0f) return raw;   // error / belum ada sensor
+  return raw + suhuOffsetX10[idx] / 10.0f;
+}
+
+bool sensorSuhuValid(int idx) { return sensorSuhuRaw(idx) > -100.0f; }
+
+// ================= SENSOR UDARA (MQ-135) =================
+// ADC -> tegangan sensor (dibagi divider ratio) ->ppm MQ-135.
+int sensorUdaraRaw() {
+  return analogRead(MQ135_PIN);
+}
+
+// Tegangan pada sensor MQ-135 sebelum divider (V).
+float mq135Tegangan() {
+  int raw = analogRead(MQ135_PIN);
+  float vAdc = (raw / ADC_RES) * VREF;          // tegangan di pin ADC
+  return vAdc / DIVIDER_RATIO;                  // naikkan kembali sebelum divider
+}
+
+// Konversi tegangan -> ppm mengikuti kurva MQ-135 (datasheet).
+float mq135PPM() {
+  float vc = mq135Tegangan();
+  if (vc <= 0.05f) return 0.0f;                  // avoid divide by ~0
+  float rs = ((MQ135_VCC / vc) - 1.0f) * MQ135_RLOAD;
+  if (rs <= 0.0f) return 0.0f;
+  float ratio = rs / MQ135_RLOAD;
+  return 25.7f * pow(ratio, -1.81f) * pow(ratio, 0.13f);
 }

@@ -622,6 +622,105 @@ void gambarKalibAgitasi() {
   }
 }
 
+// ================= HALAMAN: KALIBRASI SENSOR SUHU =================
+// 3 blok. Tiap blok: nama di atas tengah; baris bawah berisi "addr: x" (kiri)
+// dan "xx.x°C" (kanan). ENTER pindah field aktif, KIRI/KANAN mengubahnya.
+void gambarKalibSuhu() {
+  gambarHeader("Sensor Suhu");
+
+  int maxScroll = max(0, SUHU_CONTENT_H - (AREA_BAWAH - HEADER_H - 3));
+  if (kalibSuhuScroll > maxScroll) kalibSuhuScroll = maxScroll;
+  if (kalibSuhuScroll < 0) kalibSuhuScroll = 0;
+
+  int baseY = HEADER_H + 3 - kalibSuhuScroll;
+
+  oled.setTextSize(1);
+  for (int i = 0; i < JUMLAH_SUHU; i++) {
+    int y = baseY + SUHU_ROW_TOP[i];
+    if (y + SUHU_ROW_H < HEADER_H || y > AREA_BAWAH) continue;
+
+    bool blokSel = (i == kalibSuhuIdx);
+    // Kotak selector: inset 2px dari kiri/kanan, 1px dari bawah blok.
+    if (blokSel) oled.drawRoundRect(2, y - 1, SCREEN_WIDTH - 4, SUHU_ROW_H - 2, 3, WHITE);
+
+    // Nama sensor di atas tengah (2px dari atas kotak)
+    oled.setTextColor(WHITE);
+    teksTengah(namaSensorSuhu[i], y + 1, 1);
+
+    int rowY = y + 10;              // baris addr + suhu, 2px dari nama
+    bool fieldAddr  = blokSel && kalibSuhuField == 0;
+    bool fieldSuhu  = blokSel && kalibSuhuField == 1;
+
+    char buf[16];
+
+    // --- addr: x (kiri) ---
+    sprintf(buf, "addr:%d", kalibSuhuAddr[i]);
+    if (fieldAddr) oled.fillRect(4, rowY - 1, 38, 10, WHITE);
+    oled.setTextColor(fieldAddr ? BLACK : WHITE);
+    oled.setCursor(5, rowY);
+    oled.print(buf);
+
+    // --- xx.x °C (kanan) ---
+    int vx = SCREEN_WIDTH - 7;
+    uint16_t warnaTeks = fieldSuhu ? BLACK : WHITE;
+    if (fieldSuhu) oled.fillRect(vx - 30, rowY - 1, 31, 10, WHITE);
+    oled.setTextColor(warnaTeks);
+    float t = sensorSuhu(i);
+    if (sensorSuhuValid(i)) {
+      sprintf(buf, "%.1f", t);
+      int16_t x1, y1; uint16_t w, h;
+      oled.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
+      oled.setCursor(vx - (int)w - 6, rowY);
+      oled.print(buf);
+      // Simbol derajat = lingkaran kecil (font tidak punya glyph "°")
+      oled.drawCircle(vx - 5, rowY + 3, 1, warnaTeks);
+      oled.setCursor(vx - 1, rowY);
+      oled.print(F("C"));
+    } else {
+      oled.setCursor(vx - 30, rowY);
+      oled.print(F("--.-C"));
+    }
+  }
+  oled.setTextColor(WHITE);
+
+  // Indikator scroll
+  if (maxScroll > 0) {
+    const int x = SCREEN_WIDTH - 4;
+    if (kalibSuhuScroll > 0)
+      oled.fillTriangle(x - 2, HEADER_H + 3, x + 2, HEADER_H + 3, x, HEADER_H + 1, WHITE);
+    if (kalibSuhuScroll < maxScroll)
+      oled.fillTriangle(x - 2, AREA_BAWAH - 3, x + 2, AREA_BAWAH - 3, x, AREA_BAWAH - 1, WHITE);
+  }
+}
+
+// ================= HALAMAN: KALIBRASI SENSOR UDARA (MQ-135) =================
+// Dua baris acuan (Normal / Kotor) + bacaan real-time di bawah.
+void gambarKalibUdara() {
+  gambarHeader("Sensor Udara");
+
+  oled.setTextSize(1);
+
+  static const char* label[2] = { "Udara Normal", "Udara Kotor" };
+  int nilai[2] = { mq135Normal, mq135Kotor };
+  int y = HEADER_H + 4;
+  for (int i = 0; i < 2; i++, y += 11) {
+    bool sel = (kalibUdaraSel == i);
+    if (sel) oled.fillRect(0, y - 1, SCREEN_WIDTH, 10, WHITE);
+    oled.setTextColor(sel ? BLACK : WHITE);
+    oled.setCursor(4, y);
+    oled.print(label[i]);
+    char buf[12];
+    sprintf(buf, "%d", nilai[i]);
+    teksKanan(buf, SCREEN_WIDTH - 4, y);
+  }
+
+  // Bacaan real-time di bawah tengah, dengan gap dari baris di atasnya
+  oled.setTextColor(WHITE);
+  char buf[24];
+  int ppm = (int)mq135PPM();
+  sprintf(buf, "Bacaan: %d ppm", ppm);
+  teksTengah(buf, y + 4, 1);
+}
 // ================= HALAMAN: KALIBRASI FAN =================
 void gambarKalibFan() {
   gambarHeader("Kipas Exhaust");
@@ -768,6 +867,8 @@ void gambarLayar() {
     case HAL_KALIB_DC:         gambarKalibDC();         break;
     case HAL_KALIB_AGITASI:    gambarKalibAgitasi();    break;
     case HAL_KALIB_FAN:        gambarKalibFan();        break;
+case HAL_KALIB_SUHU:       gambarKalibSuhu();       break;
+    case HAL_KALIB_UDARA:      gambarKalibUdara();      break;
   }
   // Overlay
   if (halaman == HAL_PROSES && dialogBatal)

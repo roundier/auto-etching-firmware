@@ -97,6 +97,16 @@
 #define PIN_LED_STRIP   7
 #define PIN_DS18B20     10    // 1-Wire (suhu)
 #define PIN_MQ135       9     // analog (kualitas udara)
+
+// ===== MQ-135: divider analog sebelum ADC =====
+#define MQ135_PIN   9
+#define VREF        3.3
+#define ADC_RES     4095.0
+#define R1          10000.0   // R4
+#define R2          15000.0   // R5
+#define DIVIDER_RATIO (R2 / (R1 + R2))  // = 0.6
+#define MQ135_VCC     5.0      // tegangan modul MQ-135
+#define MQ135_RLOAD   10.0     // resistor load modul (kOhm)
 #define PIN_ESTOP       8     // estop_sense
 
 #define FW_VERSI  "v0.5.4"
