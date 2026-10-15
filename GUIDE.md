@@ -184,26 +184,30 @@ git push origin fix/nama-perbaikan --force
 
 ```
 auto-etching-firmware/
-├── auto-etching-firmware.ino   # File utama firmware
-├── config.h                    # Konfigurasi & pin definition
-├── data.h                      # Data & constant
-├── dbg.h                       # Debug helper
-├── input.h                     # Input handling (button, sensor)
-├── sensor.h                    # Sensor reading & processing
-├── process.h                   # Proses etching state machine
-├── presetops.h                 # Operasi preset (timer, agitasi)
-├── aktuator.h                  # Aktuator (motor, pump, buzzer)
-├── motor.h                     # Motor DC control
-├── dcmotor.h                   # DC Motor driver
+├── auto-etching-firmware.ino   # File utama firmware (setup, loop, navigasi)
+├── config.h                    # Pin map & konstanta global
+├── data.h                      # Struct, enum halaman, state global
+├── dbg.h                       # Debug helper (log Serial)
+├── input.h                     # Input handling (6 tombol via PCF8574)
+├── sensor.h                    # Sensor level (touch), DS18B20, MQ-135
+├── process.h                   # State machine proses etching
+├── presetops.h                 # CRUD preset, kalkulasi ml, validasi
+├── motor.h                     # Stepper pompa peristaltik (non-blocking)
+├── dcmotor.h                   # Motor DC & pompa DC (TB6612FNG)
 ├── buzzer.h                    # Buzzer non-blocking
-├── ui.h                        # OLED UI & display
-├── storage.h                   # EEPROM/Preferences storage
+├── ui.h                        # OLED UI & seluruh halaman
+├── storage.h                   # Penyimpanan NVS (Preferences) + CRC32
 ├── fontmini.h                  # Font data untuk OLED
+├── sensor_extra.h              # ⚠️ kode mati (belum di-#include) — perlu dihapus/aktifkan
 ├── README.md                   # Project overview
 ├── GUIDE.md                    # Panduan ini
-├── SUMMARY.md                  # Ringkasan versi saat ini
+├── SUMMARY.md                  # Ringkasan fitur & pin map saat ini
+├── PROCESS.md                  # Rencana detail proses (5 modul) + pin map TMC2209
+├── PROGRESS.md                 # Checklist status implementasi
+├── dosing-design.md            # Desain rinci modul dosing
 ├── LOG.md                      # Changelog / log perubahan
-├── etching-otomatis.md         # Dokumentasi proses etching
+├── etching-otomatis.md         # Plan awal (sebagian superseded)
+├── water-level-sensor-plan.md  # Rencana sensor level non-contact
 ├── Dokumen Perancangan Alat Etching PCB.pdf  # Dokumen perancangan
 ├── .gitignore                  # File yang di-ignore Git
 └── backup/                     # Backup versi-versi sebelumnya
@@ -212,6 +216,10 @@ auto-etching-firmware/
     ├── ...
     └── v0.8.2_2026-10-12/
 ```
+
+> `aktuator.h` **tidak ada** di root — hanya ada di dalam `backup/` sebagai
+> sisa versi lama. Wormannya sekarang: `motor.h` (stepper), `dcmotor.h` (DC),
+> `buzzer.h`.
 
 ---
 

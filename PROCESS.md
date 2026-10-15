@@ -167,7 +167,9 @@ enum FaseProses {
 
 enum KodeError {
   ERR_NONE, ERR_ESTOP, ERR_LEVEL_KURANG, ERR_TIMEOUT_DOSING,
-  ERR_STEP_MACET, ERR_OVERFLOW, ERR_SUHU, ERR_SENSOR
+  ERR_STEP_MACET, ERR_OVERFLOW, ERR_SUHU, ERR_SENSOR,
+  ERR_SUMBER_HABIS,      // BARU: jerican habis saat pompa jalan
+  ERR_POMPA_KALIB        // BARU: dosing ditolak, pompa belum dikalibrasi
 };
 
 const char* namaFase[] = {
@@ -178,7 +180,7 @@ const char* namaFase[] = {
 const char* pesanError[] = {
   "-", "EMERGENCY STOP", "Cairan kurang", "Dosing timeout",
   "Pompa macet", "Tangki limbah penuh", "Suhu terlalu tinggi",
-  "Sensor tidak terbaca"
+  "Sensor tidak terbaca", "Sumber habis", "Pompa belum dikalibrasi"
 };
 
 FaseProses prosesFase        = FASE_IDLE;
@@ -198,10 +200,17 @@ enum `Halaman` ditambah: `HAL_ALARM`.
 
 ```cpp
 // ===== DOSING (paralel) =====
-#define DOSING_PARALEL        1
-#define TIMEOUT_DOSING_MS     90000UL   // watchdog total fase dosing
-#define DETEK_MACET_MS        3000UL    // langkah tak bertambah = macet
-#define STEP_INTERVAL_US      1200      // jeda pulsa (8 kHz, aman 3 pompa)
+#define DOSING_PARALEL         1
+#define DETEK_JEKOT_MS      3000UL      // langkah tak bertambah = jekot (bukan macet rotor)
+#define DOSING_MARGIN_MS   15000UL      // margin watchdog di atas estimasi
+#define DOSING_TIMEOUT_MAKS_MS 300000UL // plafon keras watchdog dosing (5 menit)
+#define TOLERANSI_STOK        10        // ml toleransi sensor capacitive saat cek stok
+#define PRIME_STEPS          200        // langkah prime selang sebelum dosing
+#define ANTI_DRIP_STEPS       50        // langkah balik DIR setelah pompa selesai
+#define TMC_MICROSTEP         16        // mode UART TMC2209 (konfirmasi hardware)
+#define STEPPER_STEP_PER_REV 3200       // 200 × TMC_MICROSTEP
+#define LANGKAH_INTERVAL_US   400       // jeda pulsa — tentukan dari UJI LAJU STEP
+                                       // (dosing-design.md §10.1), bukan asumsi tetap
 
 // ===== ETCHING =====
 #define SUHU_MAKS_KOMPONEN    70.0f     // °C → turunkan speed agitasi
@@ -271,14 +280,14 @@ loop():
 
 | No | Task | File | Detail |
 |---|---|---|---|
-| 2.1 | `langkahPerMl` dari kalibrasi | `motor.h`, `process.h` | hapus hardcode `{1200,1200,1200}`; `langkahPerMl[i] = stepPerRev / kalibStepperMl[i]`. `kalibStepperMl[]` saat ini **hanya diubah di UI dan tidak pernah dipakai** → bug akurasi dosing |
-| 2.2 | Simpan ke NVS | `storage.h` | key baru `pompa` (3 × float ml/rotasi), naikkan `FORMAT_VERSI_KALIB` 1 → 2 |
+| 2.1 | `langkahPerMl` dari kalibrasi | `motor.h`, `process.h` | hapus hardcode `{1200,1200,1200}`; `langkahPerMl[i] = stepPerRev / mlPerRotasi[i]`. `kalibStepperMl[]` saat ini **hanya diubah di UI dan tidak pernah dipakai** → bug akurasi dosing. Perlu juga `STEPPER_STEP_PER_REV` eksplisit di `config.h` (asumsi lama 1/36 tidak mungkin) |
+| 2.2 | Simpan ke NVS | `storage.h` | **Deviasi dari usulan key baru `"pompa"`** (`dosing-design.md` §2.8): `DataKalib` versi 2 dengan `mlPerRotasiX100[3]` + `pompaValid[3]`, satu blob satu CRC — menghindari state setengah ter-update. Naikkan `FORMAT_VERSI_KALIB` 1 → 2; `pompaValid == false` → dosing ditolak (`ERR_POMPA_KALIB`) |
 | 2.3 | `FASE_CEK` pre-flight | `process.h` | cek semua 5 sensor terbaca (persen 0–100 valid) + volume tangki > 0 → gagal `ERR_SENSOR` bila tidak |
-| 2.4 | Cek ketersediaan cairan | `process.h` | `butuh_i = max(0, mlTarget_i − tersedia_i)` dengan `tersedia_i = persenSensor_i × VOL_TANGKI_i / 100`. Kekurangan → `ERR_LEVEL_KURANG` **sebelum** pompa nyala |
-| 2.5 | Pompa paralel | `process.h` | `pompaMulai(0..2, butuh_i)` bersamaan; `STEP_INTERVAL_US` 400 → **1200 µs** agar 3 pompa tidak step-loss |
+| 2.4 | Cek ketersediaan cairan | `process.h` | **Dosis = resep, bukan selisih.** `butuh_i = mlTarget_i` (resep etching). `tersedia_i = persenSensor_i × VOL_TANGKI_i / 100`. Guard: `mlTarget_i > tersedia_i + TOLERANSI_STOK` → `ERR_LEVEL_KURANG` **sebelum** pompa nyala. Detail & koreksi: `dosing-design.md` §2.4 |
+| 2.5 | Pompa paralel | `process.h` | `pompaMulai(0..2, mlTarget_i)` bersamaan. `STEP_INTERVAL_US` **tidak langsung dinaikkan ke 1200 µs** — laju pompa harus diukur dulu (§10.1 `dosing-design.md`); nilai 1200 µs justru membuat dosis besar jauh lebih lama. Catatan: menaikkan `STEP_INTERVAL_US` 400 → 1200 µs memperlambat laju 3× tanpa menambah keamanan; nilainya ditentukan dari hasil uji laju step |
 | 2.6 | Selesai berbasis kondisi | `process.h` | `pompaSelesai(0) && pompaSelesai(1) && pompaSelesai(2)` → `FASE_ETCHING` |
-| 2.7 | Deteksi macet | `process.h` | `pompaJalan[i] == true` tapi `jalanLangkah[i]` tidak bertambah > 3 s → `ERR_STEP_MACET` |
-| 2.8 | Watchdog | `process.h` | `t > TIMEOUT_DOSING_MS` → `ERR_TIMEOUT_DOSING` |
+| 2.7 | Deteksi macet | `process.h` | **Nama & cakupan diperbaiki** (`dosing-design.md` §2.5). Lapis 1 `DeteksiJekot`: `pompaJalan[i] == true` tapi `jalanLangkah[i]` datar > 3 s → `ERR_STEP_MACET`. Lapis ini **hanya** menangkap loop jam atau driver tidak merespons, **bukan** rotor macet. Lapis 2 `DeteksiMacet` (stall / selang tersumbat) opsional, butuh TMC2209 StallGuard via UART atau sensor arus |
+| 2.8 | Watchdog | `process.h` | **Dinamis, bukan konstanta mati** (`dosing-design.md` §2.6): `dosingWatchdogMs() = min(2 × t_estimasi + DOSING_MARGIN_MS, DOSING_TIMEOUT_MAKS_MS)`. `TIMEOUT_DOSING_MS 90000` konstanta tetap bisa lebih pendek dari dosis yang sah — 300 ml butuh 230–1150 s pada laju sekarang |
 | 2.9 | `pompaProgres(i)` | `motor.h` | ekspor `jalanLangkah[i] / targetLangkah[i]` untuk UI |
 | 2.10 | Sesuaikan `motorInit()` | `motor.h` | `PIN_SLP*` → `PIN_TMC_EN` / `PIN_TMC_PDN`; bila `EN`/`PDN` shared oleh 3 driver, cukup ditulis sekali |
 
@@ -287,22 +296,35 @@ loop():
 ```
 Mulai → FASE_CEK
   ├─ sensor tidak valid            → prosesGagal(ERR_SENSOR)
+  ├─ pompa belum terkalibrasi      → prosesGagal(ERR_POMPA_KALIB)
   ├─ volume tangki = 0             → prosesGagal(ERR_SENSOR)
   └─ OK → FASE_DOSING
+        prime: PRIME_STEPS langkah maju per pompa (bilas udara di selang)
         for i in 0..2:
-            tersedia_i = sensorPersen[i] × VOL_TANGKI_i / 100
-            butuh_i    = max(0, mlTarget_i − tersedia_i)
-            if (butuh_i > tersedia_i) → prosesGagal(ERR_LEVEL_KURANG)
-        pompaMulai(0, butuh_0); pompaMulai(1, butuh_1); pompaMulai(2, butuh_2)
-        loop:  motorUpdate() menghasilkan pulsa STEP tiap 1200 µs per pompa
+            mlTarget_i  = dosis dari resep preset           ← dosis = resep
+            tersedia_i  = sensorPersen[i] × VOL_TANGKI_i / 100
+            if (mlTarget_i > tersedia_i + TOLERANSI_STOK)
+                           → prosesGagal(ERR_LEVEL_KURANG)    ← cek, bukan penghitung
+        pompaMulai(0, mlHCl); pompaMulai(1, mlH2O2); pompaMulai(2, mlH2O)
+        loop:  motorUpdate() menghasilkan pulsa STEP per pompa tiap LANGKAH_INTERVAL_US
         selesai?  semua pompaSelesai()        → FASE_ETCHING
-        macet?    langkah flat > 3 s           → prosesGagal(ERR_STEP_MACET)
-        watchdog? t > 90 s                     → prosesGagal(ERR_TIMEOUT_DOSING)
+        jekot?    langkah flat > 3 s          → prosesGagal(ERR_STEP_MACET)
+        sumber?   sensorPersen[i] == 0        → prosesGagal(ERR_SUMBER_HABIS)
+        watchdog? t > dosingWatchdogMs()      → prosesGagal(ERR_TIMEOUT_DOSING)
 ```
 
-Yang berubah dari versi sekarang: ml yang dipompa **dikurangi sisa cairan di
-tangki** (dari sensor), durasi pompa dari kalibrasi nyata, dan ada 3 lapis
-pengaman (ketersediaan, macet, watchdog).
+Yang berubah dari versi sekarang:
+
+- **Dosis = resep, bukan `target − sisa`.** Versi lama dokumen ini salah
+  mengurangi ml yang akan dipompa dengan sisa cairan di jerican; sensor
+  level hanya **mengesahkan ketersediaan**, bukan menghitung dosis
+  (`dosing-design.md` §2.4).
+- Durasi pompa dihitung dari kalibrasi nyata, dan **watchdog ikut dinamis**
+  agar tidak membunuh dosis yang sah (§2.6).
+- 3 lapis pengaman: ketersediaan, jekot, watchdog — plus guard sumber habis.
+
+Detail lengkap (matematika ml→langkah, kalibrasi gravimetrik, prime/anti-drip,
+error budget) ada di **`dosing-design.md`**.
 
 ---
 
@@ -399,10 +421,10 @@ sesuai keputusan "fixed time".
 |---|---|
 | `config.h` | pin map TMC2209 (Section 1.2) + 15 konstanta baru (Section 4) |
 | `data.h` | enum `FaseProses`, `KodeError`, `namaFase`, `pesanError`, variabel state baru, `HAL_ALARM` |
-| `motor.h` | pin EN/PDN, `langkahPerMl` dari kalibrasi, `STEP_INTERVAL_US` 1200 µs, `pompaProgres()` |
+| `motor.h` | pin EN/PDN, `langkahPerMl` dari kalibrasi, `LANGKAH_INTERVAL_US` dari uji laju step, `pompaProgres()`/`pompaMlTerkira()` |
 | `dcmotor.h` | `stepperSleep(bool)`, `fanOn()/fanOff()` terpisah dari `fanSet(bool)` |
 | `buzzer.h` | `N_ALARM`, `buzzerAlarm()`, `buzzerAlarmStop()` |
-| `storage.h` | key `pompa`, naikkan `FORMAT_VERSI_KALIB` ke 2 |
+| `storage.h` | `DataKalib` versi 2: `mlPerRotasiX100[3]` + `pompaValid[3]` (satu blob, bukan key baru — `dosing-design.md` §2.8) |
 | `ui.h` | `gambarProses()` per-fase + ml terpompa + ikon aktuator + badge warning, `gambarAlarm()` baru, badge E-STOP di header |
 | `.ino` | estop ke baris pertama `loop()`; BACK di `HAL_ALARM` → reset latch |
 
@@ -435,4 +457,13 @@ sesuai keputusan "fixed time".
 
 ---
 
-*Dokumen ini disusun bersama `PROGRESS.md` (checklist status implementasi).*
+*Dokumen ini disusun bersama `PROGRESS.md` (checklist status implementasi)
+dan `dosing-design.md` (spesifikasi rinci modul dosing: matematika ml→langkah,
+kalibrasi gravimetrik, error budget, prime/anti-drip).*
+
+> **Catatan revisi (sinkron dengan `dosing-design.md` §2):** §6.2 semula
+> menjumlahkan `butuh_i = max(0, mlTarget_i − tersedia_i)` dengan guard
+> `butuh_i > tersedia_i` — logika tersebut terbalik dan kini diganti:
+> **dosis = resep**, sensor hanya mengesahkan ketersediaan. Watchdog §4 tidak
+> lagi konstanta tetap, dan "deteksi macet" dipecah menjadi `DeteksiJekot`
+> (nyata) vs `DeteksiMacet` (opsional, butuh StallGuard).

@@ -5,6 +5,56 @@ Setiap versi di-backup ke folder `backup/vX.Y.Z_tanggal/` sebelum perubahan dila
 
 ---
 
+## [2026-10-15] docs — Sinkronisasi dokumentasi + desain dosing baru
+
+**Perubahan hanya pada dokumen — tidak ada kode yang diubah, tidak ada versi
+firmware yang naik (`config.h` masih v0.5.4).**
+
+**Dokumen baru**
+- `dosing-design.md` — desain rinci modul dosing: matematika ml→langkah,
+  state machine dosing, prosedur kalibrasi gravimetrik + wizard UI, prime &
+  anti-drip, error budget (±5–7%), rencana implementasi 8 tahap, dan daftar
+  koreksi terhadap dokumen lama.
+
+**Koreksi desain yang ditemukan (bagian paling penting)**
+- **Fase DOSING berbasis fraksi waktu** (`process.h:70-75`) — pompa bisa masih
+  jalan saat fase sudah pindah ke ETCHING. Desain baru: selesai berbasis
+  kondisi (`pompaSelesai()` semua kanal).
+- **Kalibrasi pompa tidak pernah dipakai** — `kalibStepperMl[]` diubah dari UI
+  lalu berhenti; `sensor_extra.h` adalah kode mati (tidak di-`#include`).
+  Akibatnya akurasi dosing saat ini nol.
+- **Logika ml di `PROCESS.md` §6 terbalik** — `butuh = target − tersedia` dengan
+  guard `butuh > tersedia` sudah diganti: **dosis = resep**, sensor hanya
+  mengesahkan ketersediaan.
+- **Watchdog 90 s konstan** bisa lebih pendek dari dosis yang sah (300 ml butuh
+  230–1150 s pada laju sekarang) → diganti watchdog dinamis dari laju nyata.
+- **"Deteksi macet" mustahil** — `jalanLangkah[]` naik tiap pulsa tanpa umpan
+  balik motor. Dipecah: `DeteksiJekot` (nyata) vs `DeteksiMacet` (opsional,
+  butuh TMC2209 StallGuard).
+- **Klaim mikrostep 1/36 tidak mungkin** (maks 1/32) → dipakai
+  `STEPPER_STEP_PER_REV` eksplisit.
+- **NVS:** usulan key baru `"pompa"` di `PROCESS.md` §6.1task 2.2 diganti
+  `DataKalib` versi 2 (satu blob, satu CRC) agar tidak ada state setengah
+  ter-update.
+
+**Dokumen yang disinkronkan**
+- `PROCESS.md` — §2.4/2.5/2.7/2.8 & §6.2 dikoreksi, konstanta §4 ditulis ulang,
+  2 kode error baru (`ERR_SUMBER_HABIS`, `ERR_POMPA_KALIB`), catatan revisi
+  ditambahkan.
+- `PROGRESS.md` §3 — dirombak jadi 3 sub-bagian (7 ✅ / 10 ⚠️ / 24 ⬜); §10 dan
+  §11 diperbarui. **Tabel Ringkasan dihitung ulang** — angka lama (83/11/72)
+  tidak cocok dengan isi checklist-nya sendiri.
+- `SUMMARY.md` — versi v0.5.2 → v0.5.4, DRV8825 → TMC2209, daftar file
+  disinkronkan dengan kondisi aktual, `sensor_extra.h` ditandai kode mati.
+- `README.md` — Arduino Uno/Nano + EEPROM → ESP32-S3 + NVS; `aktuator.h` yang
+  sudah tidak ada dihapus dari daftar; ditambah tabel dokumentasi.
+- `GUIDE.md` — struktur repository diperbarui (`aktuator.h` dihapus, deskripsi
+  `motor.h` diperbaiki dari "Motor DC" menjadi stepper, dokumen baru
+  ditambahkan).
+- `etching-otomatis.md` — banner penanda superseded per bagian.
+
+---
+
 ## [2026-10-14] v0.5.4 — Kerangka 9 halaman Kalibrasi (menu 10 item, tanpa logika test)
 
 Tahap ini **hanya kerangka + penyimpanan**: semua item Kalibrasi sudah punya

@@ -1,5 +1,17 @@
 # Plan Pengembangan: Mesin PCB Etching Otomatis
 
+> ⚠️ **Dokumen plan awal v0.4.1 — sebagian besar sudah superseded.**
+>
+> | Bagian | Status | Digantikan oleh |
+> |---|---|---|
+> | §1 Alur Proses, §3 Perubahan Firmware | masih sesuai | `PROCESS.md` |
+> | §2 Konfigurasi Pin | ❌ **basi** — masih DRV8825 (SLP) & asumsi 1/36 | `PROCESS.md` §1.2 (pin map TMC2209) |
+> | §4 Kalibrasi Dosing | ❌ **basi** — asumsi 7200 step/rev, target ±5% tanpa error budget | `dosing-design.md` |
+> | §6 Pertanyaan Terbuka | sebagian terjawab | `PROCESS.md` §12 + `dosing-design.md` §11 |
+>
+> Angka "mikrostep 1/36 → 7200 step/putaran" di bawah **tidak mungkin**
+> terjadi: DRV8825/TMC2209 maksimum 1/32. Jangan dipakai sebagai acuan desain.
+
 Tanggal: 2026-10-08
 Target: melengkapi firmware `Etching` (v0.4.1) menjadi alat etching PCB
 otomatis: dosing HCl/H2O2/H2O akurat (stepper + DRV8825, 1/36 step), agitasi
@@ -103,9 +115,15 @@ Fan GPIO14 lama dihapus → masuk driver2-PWB (GPIO18). MPR121 (0x5A) tidak dipa
 
 ## 4. Kalibrasi Dosing
 
-- Mikrostep 1/36 → 200 × 36 = 7200 step/putaran.
+> ⚠️ **Bagian ini digantikan oleh `dosing-design.md` §3 & §6.**
+> Teks di bawah hanya menyimpan sisa rencana awal.
+
+- Mikrostep 1/36 → 200 × 36 = 7200 step/putaran. ❌ Tidak mungkin (maks 1/32);
+  asumsi ini masih terbawa di `motor.h` sampai hari ini.
 - `stepsPerMl` per pompa diukur empiris; uji dengan air (tanpa HCl) dulu.
 - Target akurasi ±5%; pantau level sumber via sensor GPIO.
+- Prosedur gravimetrik (timbangan), auto-stop, wizard di UI, dan error budget
+  lengkap ada di `dosing-design.md`.
 
 ## 5. Urutan Implementasi
 
