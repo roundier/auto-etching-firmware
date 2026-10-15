@@ -55,11 +55,17 @@ enum Halaman {
   HAL_LEVEL,
   HAL_KALIB_MAIN,
   HAL_KALIB_LEVEL,
-  HAL_KALIB_LEVEL_SET
+  HAL_KALIB_LEVEL_SET,
+  HAL_KALIB_MOTOR_LIST,
+  HAL_KALIB_STEPPER,
+  HAL_KALIB_DC,
+  HAL_KALIB_AGITASI,
+  HAL_KALIB_FAN
 };
 const char* namaHalaman[] = {
   "MENU_UTAMA", "PRESET_LIST", "PRESET_DETAIL", "PROSES", "PLACEHOLDER",
-  "CFG_LIST", "CFG_AKSI", "CFG_EDIT", "LEVEL", "KALIB_MAIN", "KALIB_LEVEL", "KALIB_LEVEL_SET"
+  "CFG_LIST", "CFG_AKSI", "CFG_EDIT", "LEVEL", "KALIB_MAIN", "KALIB_LEVEL", "KALIB_LEVEL_SET",
+  "KALIB_MOTOR_LIST", "KALIB_STEPPER", "KALIB_DC", "KALIB_AGITASI", "KALIB_FAN"
 };
 
 Halaman halaman = HAL_MENU_UTAMA;
@@ -77,11 +83,23 @@ const int DETAIL_CONTENT_H   = 90;   // tinggi total konten (virtual)
 int levelScroll = 0;
 const int LEVEL_SCROLL_STEP = 5;
 
-// State Kalibrasi
-int kalibSensorIdx = 0;       // sensor yang sedang dikalibrasi
-int kalibStep = 0;            // 0 = pilih cairan, 1 = set 0%, 2 = set 100%
-int kalibSetStep = 0;         // 0 = pilih 0%/100%, 1 = set 0%, 2 = set 100%
-int kalibLevelScroll = 0;     // scroll offset untuk halaman pilih cairan
+// State Kalibrasi Sensor Level
+int kalibSensorIdx = 0;
+int kalibSetStep = 0;
+int kalibLevelScroll = 0;
+
+// State Kalibrasi Motor/Pompa
+int kalibMotorIdx = 0;        // 0=HCl, 1=H2O2, 2=Air, 3=Sabun, 4=Limbah, 5=Agitasi, 6=Fan
+int kalibMotorScroll = 0;
+int kalibDCScroll = 0;        // scroll offset untuk halaman DC
+int kalibStepperCursor = 0;   // 0=START button, 1=ml value
+float kalibStepperMl[3] = {1.0, 1.0, 1.0};  // ml per rotasi untuk HCl, H2O2, Air
+int kalibDCCursor = 0;        // 0=START, 1=duty, 2=ml
+int kalibDuty[7] = {128, 128, 128, 128, 128, 128, 128};  // Sabun, Limbah, Agitasi SPD1-3, Fan
+float kalibMl[2] = {0, 0};  // ml hasil test untuk Sabun, Limbah
+bool kalibMotorRunning = false;  // true = motor sedang berjalan
+unsigned long kalibMotorStartMs = 0;
+int kalibMotorRunMs = 2000;    // durasi test default 2 detik
 
 // State Konfigurasi Preset
 enum DialogCfg { DLG_NONE, DLG_SIMPAN, DLG_HAPUS };

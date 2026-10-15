@@ -167,7 +167,12 @@ void tanganiTombol(int t) {
       if (t == P_BAWAH) listGeser(L_AKSI, +1, JUMLAH_MENU_KALIB);
       if (t == P_ENTER) {
         int a = lsSel[L_AKSI];
-        if (a == 1) {
+        if (a == 0) {
+          // Motor
+          listReset(L_AKSI);
+          kalibMotorIdx = 0;
+          pindahHalaman(HAL_KALIB_MOTOR_LIST);
+        } else if (a == 1) {
           // Sensor Level
           kalibSensorIdx = 0;
           kalibSetStep = 0;
@@ -177,6 +182,158 @@ void tanganiTombol(int t) {
         }
       }
       if (t == P_BACK) pindahHalaman(HAL_MENU_UTAMA);
+      break;
+
+    // ---------- Kalibrasi Motor: Pilih Motor ----------
+    case HAL_KALIB_MOTOR_LIST:
+      if (t == P_ATAS)  listGeser(L_AKSI, -1, JUMLAH_MENU_MOTOR);
+      if (t == P_BAWAH) listGeser(L_AKSI, +1, JUMLAH_MENU_MOTOR);
+      if (t == P_ENTER) {
+        kalibMotorIdx = lsSel[L_AKSI];
+        kalibStepperCursor = 0;
+        kalibDCCursor = 0;
+        if (kalibMotorIdx <= 2) {
+          // Pompa HCl, H2O2, Air (stepper)
+          pindahHalaman(HAL_KALIB_STEPPER);
+        } else if (kalibMotorIdx <= 4) {
+          // Pompa Sabun, Limbah (DC)
+          kalibDCScroll = 0;
+          pindahHalaman(HAL_KALIB_DC);
+        } else if (kalibMotorIdx == 5) {
+          // Motor Agitasi
+          pindahHalaman(HAL_KALIB_AGITASI);
+        } else {
+          // Kipas Exhaust
+          pindahHalaman(HAL_KALIB_FAN);
+        }
+      }
+      if (t == P_BACK) pindahHalaman(HAL_KALIB_MAIN);
+      break;
+
+    // ---------- Kalibrasi Stepper (Pompa HCl/H2O2/Air) ----------
+    case HAL_KALIB_STEPPER:
+      if (t == P_BACK) { pindahHalaman(HAL_KALIB_MOTOR_LIST); break; }
+      if (t == P_ATAS || t == P_BAWAH) {
+        kalibStepperCursor = 1 - kalibStepperCursor;
+        break;
+      }
+      if (t == P_KIRI || t == P_KANAN) {
+        if (kalibStepperCursor == 1) {
+          float delta = (t == P_KANAN) ? 0.1 : -0.1;
+          kalibStepperMl[kalibMotorIdx] += delta;
+          if (kalibStepperMl[kalibMotorIdx] < 0.1) kalibStepperMl[kalibMotorIdx] = 0.1;
+          if (kalibStepperMl[kalibMotorIdx] > 10.0) kalibStepperMl[kalibMotorIdx] = 10.0;
+        }
+        break;
+      }
+      if (t == P_ENTER) {
+        if (kalibStepperCursor == 0) {
+          pompaMulai(kalibMotorIdx, 1);
+          tampilToast("Running...");
+        }
+      }
+      break;
+
+    // ---------- Kalibrasi DC (Pompa Sabun/Limbah) ----------
+    case HAL_KALIB_DC:
+      if (t == P_BACK) { kalibDCScroll = 0; pindahHalaman(HAL_KALIB_MOTOR_LIST); break; }
+      if (t == P_ATAS || t == P_BAWAH) {
+        kalibDCCursor = (kalibDCCursor + 1) % 3;
+        // Auto-scroll: pastikan baris terpilih sepenuhnya terlihat
+        {
+          static const int rowTop[3]  = { 0, 16, 28 };
+          static const int rowH[3]    = { 12, 10, 10 };
+          int maxScroll = max(0, KALIB_DC_CONTENT_H - (AREA_BAWAH - HEADER_H - 4));
+          int visibleH  = AREA_BAWAH - (HEADER_H + 4);
+          if (rowTop[kalibDCCursor] - kalibDCScroll + rowH[kalibDCCursor] > visibleH)
+            kalibDCScroll = rowTop[kalibDCCursor] + rowH[kalibDCCursor] - visibleH;
+          if (rowTop[kalibDCCursor] - kalibDCScroll < 0)
+            kalibDCScroll = rowTop[kalibDCCursor];
+          if (kalibDCScroll > maxScroll) kalibDCScroll = maxScroll;
+          if (kalibDCScroll < 0) kalibDCScroll = 0;
+        }
+        break;
+      }
+      if (t == P_KIRI || t == P_KANAN) {
+        int idx = kalibMotorIdx - 3;
+        if (kalibDCCursor == 1) {
+          int delta = (t == P_KANAN) ? 5 : -5;
+          kalibDuty[idx] += delta;
+          if (kalibDuty[idx] < 0) kalibDuty[idx] = 0;
+          if (kalibDuty[idx] > 255) kalibDuty[idx] = 255;
+        } else if (kalibDCCursor == 2) {
+          int delta = (t == P_KANAN) ? 1 : -1;
+          kalibMl[idx] += delta;
+          if (kalibMl[idx] < 0) kalibMl[idx] = 0;
+          if (kalibMl[idx] > 999) kalibMl[idx] = 999;
+        }
+        break;
+      }
+      if (t == P_ENTER) {
+        if (kalibDCCursor == 0) {
+          if (kalibMotorIdx == 3) pompaSabunSet(true);
+          else pompaLimbahSet(true);
+          kalibMotorRunning = true;
+          kalibMotorStartMs = millis();
+          tampilToast("Running...");
+        }
+      }
+      break;
+
+    // ---------- Kalibrasi Agitasi ----------
+    case HAL_KALIB_AGITASI:
+      if (t == P_BACK) { pindahHalaman(HAL_KALIB_MOTOR_LIST); break; }
+      if (t == P_ATAS || t == P_BAWAH) {
+        kalibDCCursor = (kalibDCCursor + 1) % 4;
+        break;
+      }
+      if (t == P_KIRI || t == P_KANAN) {
+        int delta = (t == P_KANAN) ? 5 : -5;
+        if (kalibDCCursor < 3) {
+          kalibDuty[kalibDCCursor + 2] = constrain(kalibDuty[kalibDCCursor + 2] + delta, 0, 255);
+        }
+        break;
+      }
+      if (t == P_ENTER) {
+        if (kalibDCCursor == 3) {
+          // Test all speeds
+          for (int s = 1; s <= 3; s++) {
+            agitasiSet(s);
+            delay(1000);
+          }
+          agitasiSet(0);
+          tampilToast("Done");
+        } else {
+          agitasiSet(kalibDCCursor + 1);
+          delay(2000);
+          agitasiSet(0);
+          tampilToast("Done");
+        }
+      }
+      break;
+
+    // ---------- Kalibrasi Fan ----------
+    case HAL_KALIB_FAN:
+      if (t == P_BACK) { pindahHalaman(HAL_KALIB_MOTOR_LIST); break; }
+      if (t == P_ATAS || t == P_BAWAH) {
+        kalibDCCursor = (kalibDCCursor + 1) % 2;
+        break;
+      }
+      if (t == P_KIRI || t == P_KANAN) {
+        if (kalibDCCursor == 0) {
+          int delta = (t == P_KANAN) ? 5 : -5;
+          kalibDuty[6] = constrain(kalibDuty[6] + delta, 0, 255);
+        }
+        break;
+      }
+      if (t == P_ENTER) {
+        if (kalibDCCursor == 1) {
+          fanSet(true);
+          delay(2000);
+          fanSet(false);
+          tampilToast("Done");
+        }
+      }
       break;
 
     // ---------- Kalibrasi Sensor Level: Pilih Cairan ----------
