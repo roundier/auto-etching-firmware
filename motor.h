@@ -58,6 +58,11 @@ uint8_t pompaMode[3] = { POMPA_MODE_DOSIS, POMPA_MODE_DOSIS, POMPA_MODE_DOSIS };
 // terpompa — sehingga resume melanjutkan dari langkah tersisa, bukan mengulang.
 bool pompaJedaTahanPompa = false;
 
+// Status anti-drip. WAJIB di sini: `pompaMatikanTotal()` di bawah memakainya,
+// dan C++ mensyaratkan deklarasi mendahului pemakaian. Fungsi anti-drip-nya
+// ada di bagian bawah file ("ANTI-DRIP").
+bool antiDripAktif = false;
+
 // Aktifkan / matikan driver.
 //   sleep = true  -> EN = HIGH (TMC2209 mati, motor bebas, driver's CurrentScale idle)
 //   sleep = false -> EN = LOW  (driver aktif, bisa menerima pulsa STEP)
@@ -316,7 +321,7 @@ void pompaPrimeMulai(const int* pakai, int jumlah) {
 // Setelah pompa berhenti, tekanan sisa di dalam selang mendorong cairan
 // menetes ke tangki proses -> over-dosis kecil tapi nyata. Solusi: balik DIR
 // sebentar supaya tekanan hilang, lalu kembalikan DIR ke arah sedot.
-bool antiDripAktif = false;
+// (Variabel `antiDripAktif` dideklarasikan di bagian atas file.)
 
 void pompaAntiDripMulai() {
   antiDripAktif = true;

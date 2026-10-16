@@ -30,6 +30,18 @@ bool pompaSabunOn      = false;
 bool pompaLimbahOn     = false;
 bool fanOn             = false;
 
+// ---- State ramp-up agitasi (v0.7.4, file A) ----
+// WAJIB dideklarasikan di sini, SEBELUM setter di bawah memakainya: C++
+// mensyaratkan deklarasi mendahului pemakaian, dan `agitasiSet()`,
+// `agitasiSetDuty()`, serta `dcmotorStopAll()` semuanya menyentuh variabel ini.
+// Fungsi-fungsinya ada di bagian bawah file ("RAMP-UP AGITASI").
+#ifndef RAMP_AGITASI_MS
+#define RAMP_AGITASI_MS 1000UL
+#endif
+int           agitasiDutyTarget   = 0;   // duty tujuan (0..255)
+int           agitasiDutysekarang = 0;   // duty nyata terakhir
+unsigned long agitasiRampMsSisa   = 0;
+
 void dcmotorInit() {
   pinMode(PIN_PWA_D1, OUTPUT);
   pinMode(PIN_PWB_D1, OUTPUT);
@@ -127,14 +139,11 @@ void dcmotorStopAll() {
 //
 // `agitasiUpdate()` sengaja dipanggil dari `prosesUpdate()` dan BUKAN dari
 // loop() .ino — supaya file milik B tidak perlu disentuh sama sekali.
-
-#ifndef RAMP_AGITASI_MS
-#define RAMP_AGITASI_MS 1000UL
-#endif
-
-int           agitasiDutyTarget   = 0;   // duty tujuan (0..255)
-int           agitasiDutysekarang = 0;   // duty nyata terakhir
-unsigned long agitasiRampMsSisa   = 0;
+//
+// Catatan: variabel `agitasiDutyTarget`, `agitasiDutysekarang`,
+// `agitasiRampMsSisa`, dan `RAMP_AGITASI_MS` TIDAK dideklarasikan di sini tapi
+// di blok "Shadow state aktuator" paling atas file — supaya setter di atas
+// yang memakainya compiles.
 
 void agitasiSetRamp(int speed) {
   agitasiDutyTarget = (speed <= 0) ? 0 : agitasiPwm(speed);
