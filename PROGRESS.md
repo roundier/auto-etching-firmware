@@ -1,4 +1,4 @@
-# PROGRESS — Checklist Implementasi Firmware Etching Otomatis
+﻿# PROGRESS — Checklist Implementasi Firmware Etching Otomatis
 
 Firmware: **Etching v0.5.0** · Board: **ESP32-S3 DevKitC**
 Rencana teknis lengkap: `PROCESS.md`
@@ -9,22 +9,20 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 
 ## 1. GPIO & Hardware
 
-- [ ] ⬜ Update pin map stepper ke TMC2209 (`config.h`): STEP HCl=38, DIR HCl=48, STEP H2O2=40, DIR H2O2=39, STEP Air=42, DIR Air=41, TMC_EN=1, TMC_PDN=2
-- [ ] ⬜ Hapus `PIN_SLP1/2/3`, tambahkan `PIN_TMC_EN` + `PIN_TMC_PDN`
-- [ ] ⬜ Konfirmasi apakah `EN`/`PDN` (GPIO 1 & 2) shared 3 channel atau per-channel
-- [ ] ⬜ Konfirmasi step/rev mikrostep TMC2209 (untuk hitung `langkahPerMl`)
-- [x] ✅ I2C SDA=4, SCL=5, 400 kHz (`config.h:5-7`, `.ino:568`)
-- [x] ✅ OLED SSD1306 0x3C 128×64 terinisialisasi (`.ino:586`)
-- [x] ✅ PCF8574 0x20 — 6 tombol, inisialisasi tulis `0xFF` (`.ino:571`)
-- [x] ✅ Error I2C dideteksi & dicatat ke Serial (`.ino:571,586`)
-- [x] ✅ 5 GPIO sensor level (11/12/13/14/3) `INPUT` (`sensor.h:37`)
-- [x] ✅ 4 PWM TB6612FNG (15/16/17/18) (`dcmotor.h:10`)
-- [x] ✅ Buzzer pasif GPIO 6 via LEDC (`buzzer.h:14`)
-- [x] ✅ DS18B20 di GPIO 10, 3 sensor pada satu bus 1-Wire (`sensor.h:116`)
-- [x] ✅ MQ-135 analog GPIO 9 + divider (`config.h:99`, `sensor.h:210`)
-- [x] ✅ E-stop GPIO 8 `INPUT_PULLUP` (`.ino:582`)
-- [ ] ⬜ **LED status / LED strip (GPIO 7)** — `#define` ada, tidak pernah dipakai kode
-- [ ] ⬜ RGB WS2812 indikator per sensor (rencana awal GPIO 48 — kini bentrok dengan DIR HCl)
+- [x] ✅ **Migrasi stepper DRV8825 → TMC2209 (v0.6.0)** — pin map baru di `config.h`: `PIN_TMC_EN=1`, `PIN_TMC_PDN=2` (1 pasang, **shared 3 driver**), `PIN_STEP1/2/3 = 38/40/42`, `PIN_DIR1/2/3 = 48/39/41`. `PIN_SLP1/2/3` **dihapus**. Polaritas: `TMC_EN_AKTIF_LOW=1` (EN aktif LOW — kebalikan dari SLP DRV8825), reset pulse PDN `TMC_PDN_RESET_US=5`. `motorInit()` urut: pin mode → `stepperSleep(true)` → pulse reset PDN → `stepperSleep(false)` → `hitungLangkahPerMl()`. Mikrostep **1/16 → `STEP_PER_REV 3200`** (rumus umum `200 × 2^n`). Driver bisa dimatikan total: `stepperSleep(bool)` + `pompaMatikanTotal()` (EN = HIGH) dipakai `semuaAktuatorMati()`. GPIO **21 & 47 kini bebas** (dari `PIN_DIR3`/`PIN_STEP3` lama).
+- [x] ✅ **Kalibrasi dosing wajib diulang** — `langkahPerMl` berubah dari basis 7200 (DRV8825 1/36) ke 3200 step/rev (TMC2209 1/16). Nilai kalibrasi lama di NVS blob `"kal3"` **tidak valid** — jalankan ulang `Kalibrasi → Motor HCl/H2O2/Air`.
+- [x] ✅ I2C SDA=4, SCL=5, 400 kHz (`config.h:5-7`, `.ino:601-602`)
+- [x] ✅ OLED SSD1306 0x3C 128×64 terinisialisasi (`.ino:618`)
+- [x] ✅ PCF8574 0x20 — 6 tombol, inisialisasi tulis `0xFF` (`.ino:604`)
+- [x] ✅ Error I2C dideteksi & dicatat ke Serial (`.ino:604,618`)
+- [x] ✅ 5 GPIO sensor level (11/12/13/14/3) `INPUT` (`sensor.h:36-38`)
+- [x] ✅ 4 PWM TB6612FNG (15/16/17/18) (`config.h:79-82`, `dcmotor.h`)
+- [x] ✅ Buzzer pasif GPIO 6 via LEDC (`buzzer.h:14-18`)
+- [x] ✅ **LED status WS2812 GPIO 7** — file baru `led_strip.h`, 8 mode (Boot/Idle/Proses/Jeda/Selesai/Error/E-stop/Warning), animasi non-blocking di `ledStripUpdate()`, integrasi di `process.h` (`aksiFase`, `prosesToggleJeda`, `prosesBatal`, `prosesKeluarSelesai`) + `.ino` (`setup()` init, `loop()` update, handler E-stop)
+- [x] ✅ DS18B20 **x3 pada satu bus 1-Wire GPIO 10** (`PIN_DS18B20` = 10, `config.h`), 3 DeviceAddress hardcode (`sensor.h:119-123`), non-blocking `setWaitForConversion(false)`, offset kalibrasi per blok `suhuOffsetX10[3]` + pilih address `kalibSuhuAddr[3]`, halaman kalibrasi `HAL_KALIB_SUHU` (`ui.h:gambarKalibSuhu()`) & `HAL_KALIB_UDARA` (`ui.h:gambarKalibUdara()`), NVS blob `"kal2"` versi 2 — **catatan:** `PIN_DS_CAIRAN=45` & `PIN_DS_MOTOR=36` di `config.h` **tidak dipakai** (sisa desain lama 3-bus)
+- [x] ✅ MQ-135 analog GPIO 9 + divider R1=10k/R2=15k (`config.h:109-114`, `sensor.h:210-228`), rekam acuan `mq135Normal`/`mq135Kotor` di halaman kalibrasi
+- [x] ✅ E-stop GPIO 8 `INPUT_PULLUP` (`.ino:616`)
+- [x] ✅ **RGB WS2812 indikator per sensor (5 sensor)** — aktif di `config.h` (`SENSOR_LED_ENABLE 1`, `PIN_LED_SENSOR 47` — bebas sejak migrasi TMC2209). `led_strip.h`: `ledSensorInit()`/`ledSensorUpdate()`, 5 pixel, warna hijau ≥20% / kuning 5–19% / merah <5%, tiap komponen warna diskalakan level sehingga kecerahan = bar liquid, throttle 250 ms + redraw hanya bila sensor berubah ≥2%. Non-blocking, hook di `.ino` `setup()` + `loop()`.
 
 ---
 
@@ -45,90 +43,42 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 - [x] ✅ Tombol dibaca ulang setelah `oled.display()` (`.ino:671`)
 - [x] ✅ Kompensasi baris atas OLED rusak (`UI_Y_OFFSET` = 15 px) (`ui.h:13-46`)
 - [x] ✅ Konversi suhu DS18B20 non-blocking (`setWaitForConversion(false)`) (`sensor.h:138`)
-- [ ] ⬜ **Halaman ALARM baru** (`HAL_ALARM`) untuk semua kondisi gagal
-- [ ] ⬜ Layar proses: progress **per fase** (bukan persen total)
-- [ ] ⬜ Layar proses: panel ml terpompa per bahan (HCl/H2O2/H2O)
-- [ ] ⬜ Layar proses: ikon status aktuator (agitasi/drain/fan/soap)
-- [ ] ⬜ Layar proses: badge peringatan gas MQ-135 / suhu tinggi
-- [ ] ⬜ Layar proses: tampilkan siklus agitasi ke berapa
-- [ ] ⬜ Badge permanen "E-STOP" di header saat latch aktif
-- [ ] ⬜ Layar selesai: ringkasan total ml terpompa + durasi aktual
-- [ ] ⬜ Tampilkan nomor versi firmware di OLED (sekarang hanya Serial)
-- [ ] ⬜ Level Cairan: status ISI/KOSONG + ambang (define `AMBANG_MARGIN`/`AMBANG_HYST` ada tapi tak terpakai)
-- [ ] ⬜ Halaman `HAL_PLACEHOLDER` & `gambarPlaceholder()` — kode mati, tidak pernah dipanggil (`ui.h:336`)
-- [ ] ⬜ Halaman Kalibrasi Motor/Agitasi/Fan masih pakai `delay()` 1000–2000 ms → UI macet (`ino:310,316,341`)
+- [x] ✅ Tampilkan nomor versi firmware di OLED — `FW_VERSI` di pojok kanan atas halaman Menu Utama (`ui.h:gambarMenuUtama()`, `areaAtas` list dinaikkan ke 10 px supaya tidak menimpa baris versi)
+- [x] ✅ Level Cairan: status ISI/KOSONG + ambang — `sensor.h:sensorStatusUpdate()` memakai `AMBANG_MARGIN` (10%) naik & `AMBANG_HYST` (3%) turun supaya tidak berkedip di ambang; `sensorAdaCairan(i)` dipakai `ui.h:gambarLevel()` (label `ISI` blok terbalik / `KOSONG`, bar geser ke kanan)
+- [x] ✅ Halaman `HAL_PLACEHOLDER` & `gambarPlaceholder()` dihapus —enum `data.h`, `namaHalaman[]`, `case` di `ui.h` & `.ino`, fungsi `gambarPlaceholder()` tidak pernah terjangkau sejak v0.5.2
+- [x] ✅ Halaman Kalibrasi Agitasi/Fan tidak lagi pakai `delay()` — `mulaiTestMotor(jenis, durasiMs)` + `upkeepKalibrasiMotor()` dijadwalkan via `millis()`, dicek di `loop()`. `kalibMotorRunning` yang tadinya di-set tapi tidak pernah dibaca kini jadi flag aktif. BACK saat test sedang jalan mematikan motor
+- [ ] ⬜ **Halaman ALARM baru** (`HAL_ALARM`) untuk semua kondisi gagal — butuh `prosesGagal()` + `KodeError` dari Bab 6
+- [x] ✅ Layar proses: progress **per fase** (bukan persen total) (v0.7.2) - loading bar menormalisasi `frac` ke dalam band fase yang sedang jalan via `process.h:prosesFraksiFase()` + `FASE_AWAL_F[]`/`FASE_AKHIR_F[]` (tunggal dengan `faseDariFrac()`, jadi bar 100% tidak pernah bertentangan dengan pergantian fase). Masalahnya: bar lama memakai fraksi total, sehingga selama fase ETCHING - 65% dari total waktu preset - bar terlihat beku di ~10% hampir dua thirds durasi. Persen total tetap di kanan atas supaya konteks tidak hilang
+- [x] ✅ Layar proses: panel ml terpompa per bahan (HCl/H2O2/H2O) (v0.7.2) - `ui.h:gambarPanelMl()` baris 45-49 (font mini). **Butuh perbaiki bug lebih dulu:** `pompaMulai()` me-reset `jalanLangkah[]`, dan `aksiFase(FASE_RINSING)` memanggil `pompaMulai(2, 100)` tanpa menghentikan pompa H2O dulu, sehingga ml H2O dari DOSING terhapus diam-diam. Akumulator baru `motor.h:totalMlTerpompa[3]` bertambah di `pompaRekamHasil()` dari tiga titik: `motorUpdate()` saat target tercapai, `pompaStopAll()` (ml yang sudah keluar sebelum E-stop tetap tercatat - cairan itu benar-benar keluar dari tangki), dan `pompaMulai()` **sebelum** reset `jalanLangkah`. Dihapus `pompaResetTotal()` di `prosesMulai()`
+- [x] ✅ Layar proses: ikon status aktuator (agitasi/drain/fan/soap) (v0.7.2) - `ui.h:gambarIkonAktuator()` baris 52-61, 4 ikon `AGI/LIM/FAN/SBN`. Butuh shadow state di `dcmotor.h` (`agitasiDutyAktif`, `pompaSabunOn`, `pompaLimbahOn`, `fanOn`) karena `analogWrite()` menulis langsung ke register PWM dan tidak bisa dibaca balik. Dicatat di setiap setter termasuk `dcmotorStopAll()`. OLED monochrome jadi motor aktif ditandai kotak di sekeliling label
+- [ ] ⬜ Layar proses: badge peringatan gas MQ-135 / suhu tinggi — butuh ambang proteksi dari Bab 4
+- [ ] ⬜ Layar proses: tampilkan siklus agitasi ke berapa — butuh `prosesSiklus` dari Bab 4
+- [ ] ⬜ Badge permanen "E-STOP" di header saat latch aktif — butuh latch `estopAktif` dari Bab 6
+- [x] ✅ Layar selesai: ringkasan total ml terpompa + durasi aktual (v0.7.2) - `ui.h:gambarSelesai()` sebagai **mode gambar dari `HAL_PROSES`** (bukan halaman baru; isinya statis jadi tidak perlu menambah enum `Halaman`), dipanggil dari `gambarProses()` saat `prosesSelesai()`. Menampilkan durasi aktual vs rencana, total ml, rincian per bahan, dan "BACK: keluar". Baris 43-63 OLED sebelumnya tidak terpakai sama sekali. **Temuan:** durasi aktual tidak bisa diambil dari `prosesAkumMs` karena dijepit ke `totalMs` di `prosesUpdate()` supaya fraksi progress selalu 0..1 - di akhir proses nilainya identik dengan `totalDetik` dan tidak ada informasi baru. Ditambah `prosesWaktuMs` yang tidak dijepit, khusus untuk laporan
 
 ---
 
 ## 3. Modul Dosing (`process.h` § DOSING, `motor.h`, `presetops.h`)
 
-Spesifikasi rinci: **`dosing-design.md`** — matematika dosing, kalibrasi
-gravimetrik, error budget, prime/anti-drip, dan daftar koreksi desain
-(vs `PROCESS.md` §6 dan `etching-otomatis.md` §4).
-
-### 3.1 Sudah ada
-
-- [x] ✅ Driver stepper non-blocking (puls STEP tiap `LANGKAH_INTERVAL_US`) (`motor.h:50`)
-- [x] ✅ Konversi ml → jumlah langkah (`targetLangkah = ml × langkahPerMl`) (`motor.h:34`)
-- [x] ✅ 3 pompa (HCl/H2O2/H2O) menjalankan **paralel** saat fase DOSING (`process.h:28-33`)
+- [x] ✅ Driver stepper non-blocking (puls STEP tiap `LANGKAH_INTERVAL_US`) (`motor.h:motorUpdate()`)
+- [x] ✅ Konversi ml → jumlah langkah (`targetLangkah = ml × langkahPerMl`) (`motor.h:pompaMulai()`)
+- [x] ✅ 3 pompa (HCl/H2O2/H2O) dijalankan **paralel** saat fase DOSING (`process.h:aksiFase()`)
 - [x] ✅ `pompaMulai()` / `pompaStopAll()` / `pompaSelesai()` tersedia
-- [x] ✅ Hitung otomatis %H2O dan ml tiap bahan dari %HCl/%H2O2 + volume (`presetops.h:17`)
-- [x] ✅ Validasi rentang semua field preset (`presetops.h:49`)
-- [x] ✅ Halaman kalibrasi stepper: uji pompa + set ml/rotasi (`ino:222`)
-
-### 3.2 Ada tapi belum fungsional
-
-- [ ] ⚠️ `langkahPerMl` **hardcode `{1200,1200,1200}`** — sisa asumsi DRV8825 7200 step/rev (`motor.h:14`)
-- [ ] ⚠️ `kalibStepperMl[]` diubah dari UI tapi **tidak pernah dipakai** `pompaMulai()` (`data.h:99`, `ino:231`) → akurasi dosing saat ini nol
-- [ ] ⚠️ `sensor_extra.h` (isi `langkahPerMlX1000` + `pompaTerapkanKalibrasi()`) **tidak di-`#include` siapa pun** → kode mati (`sensor_extra.h:62-80`)
-- [ ] ⚠️ Fase DOSING selesai berdasarkan **fraksi waktu** (10% `totalDetik`), bukan kondisi pompa → pompa bisa meleset ke ETCHING (`process.h:70-75`)
-- [ ] ⚠️ Logika "ml dibutuhkan" di `PROCESS.md` §6 terbalik: `butuh = target − tersedia` + guard `butuh > tersedia`
-- [ ] ⚠️ Watchdog 90 s bisa **lebih pendek dari dosis yang sah** (300 ml butuh 230–1150 s pada laju sekarang)
-- [ ] ⚠️ "Deteksi macet" tidak mungkin bekerja: `jalanLangkah[]` naik tiap pulsa tanpa umpan balik motor
-- [ ] ⚠️ `kalibMotorRunning` diset `true` tapi tidak pernah dibaca → uji pompa tak pernah auto-stop (`data.h:111`)
-- [ ] ⚠️ Halaman kalibrasi stepper masih memakai `delay()` saat uji pompa (`ino:239`)
-- [ ] ⚠️ `sensor_extra.h` tidak tersimpan ke NVS sama sekali (`DataKalib` hanya menyimpan titik sensor level, `storage.h:78-85`)
-
-### 3.3 Perlu dikerjakan (urutan implementasi `dosing-design.md` §10)
-
-**Konstanta & hardware**
-
-- [ ] ⬜ `TMC_MICROSTEP` + `STEPPER_STEP_PER_REV` di `config.h` (ganti asumsi 1/36 yang tidak mungkin)
-- [ ] ⬜ Dosing **ditolak** (`ERR_POMPA_KALIB`) selama `pompaValid[i] == false`
+- [x] ✅ `pompaMatikanTotal()` — stop + `stepperSleep(true)` (EN = HIGH) supaya driver TMC2209 benar-benar tidur
+- [x] ✅ Hitung otomatis %H2O dan ml tiap bahan dari %HCl/%H2O2 + volume (`presetops.h:hitungUlang()`)
+- [x] ✅ Validasi rentang semua field preset (`presetops.h:validasiPreset()`)
+- [x] ✅ Halaman kalibrasi stepper: uji pompa + set ml/rotasi + simpan ke NVS (`HAL_KALIB_STEPPER`)
+- [x] ✅ `langkahPerMl = STEP_PER_REV / mlPerRotasi` — `hitungLangkahPerMl()` memakai `STEP_PER_REV` (3200, TMC2209 1/16) bukan asumsi tetap 7200
+- [x] ✅ `kalibStepperMl[]` **dipakai** `pompaMulai()` — dibaca `muatKalibStepper()` saat boot, dihitung di `motorInit()`, ditulis `simpanKalibStepper()` saat BACK dari halaman kalibrasi
+- [x] ✅ Simpan kalibrasi ml/rotasi ke NVS — blob `"kal3"` (`DataKalib3`: versi + `float stepperMl[3]` + CRC32), terpisah dari `"kal"`/`"kal2"`
+- [x] ✅ `STEP_INTERVAL_US` 400 → **1200 µs** (aman 3 pompa paralel, ~830 Hz)
+- [ ] ⬜ Fase `FASE_CEK` pre-flight: validasi sensor & volume tangki
+- [ ] ⬜ Hitung ml yang dibutuhkan = target − sisa cairan di tangki (dari sensor)
+- [ ] ⬜ Cek ketersediaan cairan → `ERR_LEVEL_KURANG` sebelum pompa nyala
+- [ ] ⬜ Selesai dosing berbasis kondisi (saat ini masih berbasis fraksi waktu)
+- [ ] ⬜ Deteksi pompa macet (langkah tidak bertambah > 3 s)
+- [ ] ⬜ Watchdog timeout dosing (90 s)
 - [ ] ⬜ Volume tangki (`VOL_TANGKI_*`) sebagai data, bukan `#define` statis
-
-**Motor (`motor.h`)**
-
-- [ ] ⬜ `langkahPerMl[i] = stepPerRev / mlPerRotasi[i]`, diterapkan setiap kalibrasi disimpan
-- [ ] ⬜ `pompaMlTerkira(i)` / `pompaProgres(i)` / `pompaSemuaSelesai()`
-- [ ] ⬜ Guard `DOSE_MIN`/`DOSE_MAX` per pompa
-- [ ] ⬜ `pompaStopAll()` + `TMC_PDN` LOW sebagai jalan keluar tunggal
-
-**Proses (`process.h`)**
-
-- [ ] ⬜ `FASE_CEK` pre-flight: sensor terbaca, tangki terkalibrasi, pompa terkalibrasi
-- [ ] ⬜ Cek ketersediaan cairan → `ERR_LEVEL_KURANG` **sebelum** pompa nyala
-- [ ] ⬜ Guard `ERR_SUMBER_HABIS` saat dosing sedang berjalan
-- [ ] ⬜ Selesai dosing berbasis kondisi (hapus `faseDariFrac()` untuk dosing)
-- [ ] ⬜ Watchdog **dinamis** `dosisWatchdogMs()` dari laju nyata, bukan konstanta 90 s
-- [ ] ⬜ `DeteksiJekot` (langkah datar > 3 s) — ganti nama "deteksi macet"
-- [ ] ⬜ Prime selang (`PRIME_STEPS`) sebelum dosis dihitung
-- [ ] ⬜ Anti-drip: balik `DIR` `ANTI_DRIP_STEPS` setelah pompa selesai
-- [ ] ⬜ Jeda = pompa freeze, resume dari langkah tersisa (bukan reset ke 0)
-- [ ] ⬜ Volume bilasan lewat jalur dosing terkalibrasi (100 ml → `ML_BILASAN`)
-
-**Preset (`presetops.h`)**
-
-- [ ] ⬜ `hitungUlang()` bulatkan ke terdekat — error pembulatan tidak jatuh seluruhnya ke H2O
-- [ ] ⬜ `validasiPreset()` tolak sisa pembulatan > 2 ml
-
-**Kalibrasi & penyimpanan**
-
-- [ ] ⬜ Wizard kalibrasi gravimetrik: target uji → volume aktual (timbangan) → `langkahPerMl`
-- [ ] ⬜ Auto-stop uji pompa berbasis `millis()` (ganti `delay()`)
-- [ ] ⬜ `DataKalib` versi 2: `mlPerRotasiX100[3]` + `pompaValid[3]` + CRC (satu blob, bukan key baru)
-- [ ] ⬜ Simpan **tanggal kalibrasi** + peringatan "Kalibrasi sudah > 30 hari"
-- [ ] ⬜ Kalibrasi dilakukan pada kondisi nyata: motor hangat, ketinggian tangki proses sebenarnya
 
 ---
 
@@ -178,18 +128,18 @@ gravimetrik, error budget, prime/anti-drip, dan daftar koreksi desain
 - [x] ✅ Semua aktuator mati saat proses dibatalkan (`.ino:110-116`)
 - [x] ✅ Dialog konfirmasi batal saat proses berjalan (`ino:121-141`)
 - [x] ✅ Log Serial untuk setiap transisi fase & pembatalan
-- [ ] ⬜ Estop dipindah ke **baris pertama `loop()`** (saat ini setelah `tanganiTombol()`, `prosesUpdate()`, `motorUpdate()`, `sensorUpdate()`)
-- [ ] ⬜ Latch `estopAktif` — tidak auto-reset saat pin kembali HIGH
-- [ ] ⬜ Reset latch hanya lewat BACK di `HAL_ALARM`, dan hanya bila pin HIGH
-- [ ] ⬜ Fungsi tunggal `semuaAktuatorMati()` (saat ini 4× duplikasi di 3 tempat)
-- [ ] ⬜ Cut power driver stepper (TMC_PDN LOW) saat stop
-- [ ] ⬜ `prosesGagal(kode)` sebagai satu-satunya jalan keluar kondisi abnormal
-- [ ] ⬜ Timeout/watchdog per fase (DOSING, DRAINING, RINSE)
-- [ ] ⬜ Buzzer nada alarm (berulang) berbeda dari nada "selesai"
-- [ ] ⬜ Halaman alarm + instruksi pemulihan
-- [ ] ⬜ Jeda (`prosesToggleJeda`) ikut mematikan output, bukan hanya timer
-- [ ] ⬜ Deteksi kegagalan sensor saat proses (DS18B20/touch) → abort aman
-- [ ] ⬜ Fail-safe saat OLED/PCF8574 hilang (hanya E-stop berfungsi, beri peringatan)
+- [x] ✅ Estop dipindah ke **baris pertama `loop()`** (v0.7.3) - cek `estopAktif || digitalRead(PIN_ESTOP)==LOW` jadi baris pertama `.ino:loop()` dengan `return`, sehingga tombol/proses/motor/sensor/render dilewati (sebelumnya di `.ino:701`, SETELAH `tanganiTombol()`, `prosesUpdate()`, `motorUpdate()`, `sensorUpdate()`). **Tiga hal tetap jalan saat latch aktif** karena dilewatkannya justru merusak fail-safe: `buzzerUpdate()` (nada alarm membeku di satu nada selama 10 detik), `ledStripUpdate()`, dan `watchdogFeed()` (tanpa ini menahan E-stop >10 detik memicu reset, dan reset justru ME-CLEAR latch)
+- [x] ✅ Latch `estopAktif` - tidak auto-reset saat pin kembali HIGH (v0.7.3) - E-stop adalah sakelar putar yang dikunci operator; melepasnya otomatis hanya dengan pin bergoyang membuka jalan bagi proses yang mulai lagi dengan tangan masih di tombol
+- [x] ✅ Reset latch hanya lewat BACK di `HAL_ALARM`, dan hanya bila pin HIGH (v0.7.3) - `case HAL_ALARM:` di `tanganiTombol()`. Kalau pin masih LOW, BACK diabaikan + toast "E-stop masih ditekan" dan layar menampilkan "E-STOP MASIH DITEKAN" supaya operator tahu kenapa tombol tidak merespons
+- [x] ✅ Fungsi tunggal `semuaAktuatorMati()` - **SUDAH ADA SEJAK LAMA, item ini basi** (v0.7.3). Ada di `process.h:30`, dipanggil dari 4 tempat: `aksiFase` FASE_SELESAI, `prosesBatal`, handler E-stop, dan `>off`. Teks item menggambarkan kondisi SEBELUM refactor. Tidak dikerjakan ulang, hanya ditandai benar
+- [x] ✅ Cut power driver stepper saat stop - **SUDAH TERPENUHI, tapi item aslinya salah paham** (v0.7.3). `TMC_PDN` adalah pin *reset*, bukan enable power; `LOW` = mode reset, bukan mati listrik. Dan `PROCESS.md:231` yang menulis `digitalWrite(TMC_EN, LOW)` terbalik: sejak migrasi TMC2209 (v0.6.0) EN **aktif LOW**, jadi tidur = EN **HIGH** - sudah dikerjakan `stepperSleep(true)` di dalam `pompaMatikanTotal()`. Menjalankan `TMC_PDN LOW` saat stop justru akan membuat driver dalam mode reset. Tidak diimplementasikan, alasannya dicatat di `LOG.md`
+- [x] ✅ `prosesGagal(kode)` sebagai satu-satunya jalan keluar kondisi abnormal (v0.7.3) - `process.h`, dengan `enum KodeError` 8 nilai + `namaError[]` + `pesanError[]` di `data.h`. Alarm ditandai `prosesError != ERR_NONE`, **bukan** nilai baru di `enum FaseProses` (menambah `FASE_GAGAL` berarti menyentuh semua `switch` pada fase). Panggilan kedua diabaikan supaya kode pertama yang paling informatif tidak tertimpa. `prosesMulai()` menolak jalan selama alarm/E-stop aktif
+- [x] ✅ Timeout/watchdog per fase (DOSING, DRAINING, RINSE) (v0.7.3) - `TIMEOUT_FASE_MS[]` per fase di `process.h`, dibandingkan terhadap `prosesMasukFaseMs`. Jaring pengaman terakhir untuk timer kacau / fase tidak pernah berganti. Diisi juga `ERR_STEP_MACET`: `pompaJalan[i]` true tapi `jalanLangkah[i]` beku >3 detik - pada pompa peristaltik "nyala tapi tidak memompa" (selang putus, rotor macet) tidak terlihat dari driver
+- [x] ✅ Buzzer nada alarm (berulang) berbeda dari nada "selesai" (v0.7.3) - `N_ALARM` = 3 beep panjang 400 Hz + jeda, berulang sampai di-reset. Scheduler `buzzerPutar()` dapat parameter `ulang` supaya alarm bisa berjalan tanpa batas tanpa membuat `buzzerUpdate()` blocking
+- [x] ✅ Halaman alarm + instruksi pemulihan (v0.7.3) - `HAL_ALARM` (enum `Halaman` + `namaHalaman[]`), `ui.h:gambarAlarm()` menampilkan kode dalam kotak text size 2, `pesanError[]` sebagai instruksi, detik ke-berapa proses berhenti, dan petunjuk tombol
+- [x] ✅ Jeda (`prosesToggleJeda`) ikut mematikan output, bukan hanya timer (v0.7.3) - **bug nyata yang sudah lama ada**: agitasi/pompa/fan tetap berputar selama jeda. Sekarang `semuaAktuatorMati()` saat jeda, `aksiFase()` saat lanjut (shadow state v0.7.2 membuat ikon di layar proses ikut benar)
+- [x] ✅ Deteksi kegagalan sensor saat proses (DS18B20/touch) → abort aman (v0.7.3) - `sensorMati[]` (v0.6.5) dipakai di `prosesUpdate()`: sensor mati saat proses jalan → `prosesGagal(ERR_SENSOR)`. Level dipakai untuk keputusan dosing dan cek akhir, jadi sensor mati berarti keputusan diambil dari data palsu. Hanya saat proses aktif & tidak dijeda
+- [x] ✅ Fail-safe saat OLED/PCF8574 hilang (v0.7.3) - **sebagian sudah terpenuhi sejak dulu**: E-stop di `PIN_8` GPIO langsung, tidak lewat I2C, jadi tetap mematikan aktuator walau seluruh bus I2C mati. Yang ditambahkan: `>status` melaporkan `i2cGagalBerturut`, jumlah recovery, dan status watchdog. Peringatan tidak bisa tampil di OLED justru karena OLED itulah yang hilang - jadi lewat Serial
 
 ---
 
@@ -200,21 +150,23 @@ gravimetrik, error budget, prime/anti-drip, dan daftar koreksi desain
 - [x] ✅ Konversi raw → persen dengan clamp 0–100 (`sensor.h:74`)
 - [x] ✅ Kalibrasi 0% & 100% per sensor dari UI (`ino:412-460`)
 - [x] ✅ Kalibrasi level disimpan ke NVS + CRC + auto-reject bila tidak valid (`storage.h:87`)
-- [x] ✅ Baseline default 113000/156000 bila kalibrasi belum ada (`storage.h:120`)
+- [x] ✅ Baseline default `113000/156000` bila kalibrasi belum ada (`storage.h:121-122`, `sensor.h:54-55`) — **angka hasil ukur nyata** dari `pilot/pilot_touch_sensor.ino:58-59`, bukan tebakan; skala `touchRead()` di ESP32-S3 memang ratusan ribu. ⚠️ Default dipakai **seragam untuk kelima sensor**, padahal hasil ukur per-sensor berbeda → error ±12% di tengah skala (masih tepat di 0% dan 100%). Hilang begitu tangki dikalibrasi lewat UI, karena nilai asli dari `touchRead()` lalu tersimpan di NVS `"kal"`
+- [ ] ⬜ Default baseline **per-sensor** (5 pasang nilai) — pakai hasil ukur pilot sketch: kosong `{113000, 113000, 113000, 116000, 110000}`, penuh `{156000, 161000, 161000, 157000, 152000}` (`sensor.h:54-55`, `storage.h:121-122`). **Prioritas rendah** — hanya menjaga akurasi sebelum tangki dikalibrasi; setelah `Kalibrasi → Sensor Level` tiap tangki, default tidak lagi dipakai. **DITUNDA atas permintaan pemilik** — diabaikan karena dampaknya nol setelah kalibrasi.
 - [x] ✅ Halaman Kalibrasi → 4 submenu (Motor, Sensor Level, Sensor Suhu, Sensor Udara)
 - [x] ✅ Kalibrasi MQ-135: rekam acuan udara bersih & kotor (`ino:388-408`)
 - [x] ✅ Kalibrasi suhu: pilih sensor per blok + offset ±0,1 °C (`ino:348-373`)
 - [x] ✅ Kalibrasi agitasi & fan: uji motor/kipas (`ino:292-344`)
 - [x] ✅ Kalibrasi DC: atur duty 0–255 dan catat ml hasil uji (`ino:246-289`)
 - [x] ✅ Log diagnostik `[SENSOR]`/`[SUHU]`/`[STORE]` ke Serial
-- [ ] ⚠️ **Address DS18B20 hardcode** di `sensor.h:119` — harus cocok address fisik
-- [ ] ⚠️ `kalibSuhuAddr[]` & `suhuOffsetX10[]` **tidak disimpan ke NVS** (hilang saat reset)
-- [ ] ⚠️ `mq135Normal`/`mq135Kotor` **tidak disimpan ke NVS** dan tidak dipakai proteksi
-- [ ] ⚠️ `kalibMotorRunning` diset `true` tapi **tidak pernah dibaca** → motor kalibrasi tak pernah auto-stop (`data.h:103`, `ino:284`)
-- [ ] ⚠️ `kalibDuty[]` & `kalibMl[]` tidak disimpan ke NVS
-- [ ] ⬜ Simpan semua parameter kalibrasi ke NVS (versi format naik ke 2)
-- [ ] ⬜ Auto-stop motor kalibrasi setelah N ms (ganti `delay()`)
-- [ ] ⬜ Deteksi sensor touch mati (nilai tidak berubah / selalu 0%)
+- [x] ✅ **Address DS18B20 tidak lagi hardcode** (v0.6.3) — `sensorSuhuInit()` memindai bus 1-Wire lewat `getAddress()` lalu menyimpan hasilnya ke NVS blob `"kal5"` (`DataKalib5`: `addr[3][8]` + bitmask valid + CRC32). Boot berikutnya memakaitaddress dari NVS supaya urutan blok tidak berubah. Family code 0x28 diverifikasi saat muat — blob rusak ditolak lalu dipindai ulang. Slot kosong ditandai `sensorAddressValid[s] = false` → `sensorSuhuRaw()` mengembalikan -127 → UI tampil `--.-C`. Address dicetak ke Serial saat boot pertama untuk dicocokkan dgn label fisik Motor/Komponen/Chamber
+- [x] ✅ `kalibSuhuAddr[]` & `suhuOffsetX10[]` **sudah disimpan ke NVS** (v0.6.4) — `DataKalib2` versi 2 memakai `addrSensor[3]` + `suhuOffsetX10[3]`. **Perbaikan v0.6.4:** sebelumnya status ini ditandai ✅ padahal `simpanKalib2()` tidak pernah dipanggil — struct-nya sudah ada sejak v0.6.0 tapi tidak ada pemanggilnya (bug warisan merge `2c84273`). Sekarang `simpanKalib2()` dipanggil saat BACK dari `HAL_KALIB_SUHU`
+- [x] ✅ `mq135Normal`/`mq135Kotor` **sudah disimpan ke NVS** (v0.6.4) — keduanya field di `DataKalib2` versi 2, ditulis saat BACK dari `HAL_KALIB_UDARA` (perbaikan yang sama). *Sisa:* belum dipakai proteksi gas (itu item Bab 4)
+- [x] ✅ `kalibMotorRunning` **sudah dibaca** (v0.6.1) — `mulaiTestMotor()` + `upkeepKalibrasiMotor()` menjadwalkan auto-stop test agitasi/fan via `millis()`, plus BACK mematikan motor lebih dulu. Lihat §2 Modul UI
+- [x] ✅ `kalibDuty[]` & `kalibMl[]` **sudah disimpan ke NVS** (v0.6.2) — blob `"kal4"` (`DataKalib4`: `duty[7]` + `mlX10[2]`, versi + CRC32), ditulis `simpanKalib4()` saat BACK dari `HAL_KALIB_DC` / `HAL_KALIB_AGITASI` / `HAL_KALIB_FAN`, dibaca `muatKalib4()` di `setup()`. Default 128 (≈50% duty) bila blob belum ada
+- [x] ✅ Auto-stop motor kalibrasi setelah N ms (ganti `delay()`) — selesai v0.6.1 (`upkeepKalibrasiMotor()`), lihat catatan `kalibMotorRunning` di atas
+- [x] ✅ Terapkan `kalibDuty[]` ke motor (v0.6.6) — semua PWM kini diambil dari hasil kalibrasi, bukan konstanta: `pompaSabunSet()`→`kalibDuty[0]`, `pompaLimbahSet()`→`kalibDuty[1]`, `fanSet()`→`kalibDuty[6]`. Agitasi punya 5 tingkat di preset tapi hanya 3 titik kalibrasi, jadi `agitasiPwm()` meng-interpolasi linier (speed 1→slot 2, 2→antara 2-3, 3→slot 3, 4→antara 3-4, 5→slot 4) — semua hasil kalibrasi terpakai dan tidak ada tingkat yang meloncat. `dcmotorInit()` dipanggil setelah `muatKalib4()` di `setup()`, jadi nilai kalibrasi sudah tersedia saat motor pertama kali dihidupkan. Default semua slot 128 (~50%) bila blob belum ada
+- [x] ✅ Simpan semua parameter kalibrasi ke NVS — 5 blob terpisah, masing-masing dengan versi + CRC32: `"kal"` (baseline 0%/100% + kapasitas 5 tangki level), `"kal2"` (addr + offset 3 blok DS18B20 + acuan MQ-135), `"kal3"` (ml/rotasi pompa stepper), `"kal4"` (duty PWM 7 motor + ml hasil uji motor DC), `"kal5"` (address DS18B20 hasil pindai bus)
+- [x] ✅ Deteksi sensor touch mati (v0.6.5) — `sensor.h:sensorMatiUpdate()` menandai strip yang `touchRead()`-nya beku di **0** selama `SENSOR_BEKU_MS` (60 detik); `touchRead()` yang sehat selalu non-nol, jadi 0 beku ≈ kabel putus / strip copot. Log `[SENSOR] <nama> MATI` sekali saat berubah, dan `[SENSOR] <nama> pulih` saat hidup lagi (tanpa perlu reset). `ui.h:gambarLevel()` menampilkan `DEAD` menggantikan persen + menyembunyikan isi bar, karena angka 0% yang palsu lebih berbahaya daripada tidak menampilkan apa pun. **Batas deteksi:** strip yang sudah tidak sensitif (buildup karat, HDPE tebal) masih bergerak sedikit dan *tidak* terdeteksi — hanya kasus beku total yang tertangkap. Penting untuk `FASE_CEK` Bab 3 agar tidak memercayai level yang salah
 
 ---
 
@@ -227,10 +179,10 @@ gravimetrik, error budget, prime/anti-drip, dan daftar koreksi desain
 - [x] ✅ Simpan preset ke NVS sebagai satu blob + versi + CRC32 (`storage.h:26`)
 - [x] ✅ Muat preset: reject bila versi beda / CRC rusak / data tak valid (`storage.h:45`)
 - [x] ✅ Auto-reset ke default bila data korup (`storage.h:70`)
-- [ ] ⬜ Simpan kalibrasi pompa (ml/rotasi) ke NVS
-- [ ] ⬜ Simpan offset suhu & acuan MQ-135 ke NVS
-- [ ] ⬜ Simpan duty/kecepatan motor per kalibrasi ke NVS
-- [ ] ⬜ Backup/restore preset via Serial (export/import)
+- [x] ✅ Simpan kalibrasi pompa (ml/rotasi) ke NVS — blob `"kal3"` (`DataKalib3`: `float stepperMl[3]` + versi + CRC32), ditulis `simpanKalibStepper()` saat BACK dari `HAL_KALIB_STEPPER` (v0.5.7)
+- [x] ✅ Simpan offset suhu & acuan MQ-135 ke NVS — blob `"kal2"` (`DataKalib2` versi 2: `addrSensor[3]` + `suhuOffsetX10[3]` + `mq135Normal`/`mq135Kotor`, versi + CRC32), ditulis `simpanKalib2()` saat BACK dari `HAL_KALIB_SUHU` / `HAL_KALIB_UDARA` (v0.6.4)
+- [x] ✅ Simpan duty/kecepatan motor per kalibrasi ke NVS — blob `"kal4"` (`DataKalib4`: `duty[7]` + `mlX10[2]`, versi + CRC32), ditulis `simpanKalib4()` saat BACK dari `HAL_KALIB_DC`/`HAL_KALIB_AGITASI`/`HAL_KALIB_FAN` (v0.6.2)
+- [x] ✅ Backup/restore preset via Serial (export/import) — `serialcmd.h` v0.7.1: `>export` (cetak blok teks ber-header `#AE1` + footer `#OK <crc32>`), `>import` (terapkan), `>rollback` (kembalikan daftar sebelum import terakhir), `>abort`. Snapshot otomatis ke key NVS `"prev"` sebelum overwrite. Import ditolak kalau proses jalan; setiap baris divalidasi (jumlah field, indeks berurutan, angka benar-benar angka via `strtol` + cek sisa string, `validasiPreset()`, nama unik); CRC mismatch = batal total, preset lama utuh. Baris >80 B ditandai dan ditolak, tidak dipotong diam-diam. Parser non-blocking per karakter; baris berawalan `>` membatalkan import **dan** jadi perintah (tidak ada kondisi buntu). Cakupan **preset saja** — blob kalibrasi `kal`…`kal5` sengaja tidak ikut karena terikat alat fisik
 
 ---
 
@@ -241,11 +193,11 @@ gravimetrik, error budget, prime/anti-drip, dan daftar koreksi desain
 - [x] ✅ Log debug lengkap via `dbg.h` dengan prefix per modul (`[PROSES]`, `[POMPA]`, `[KALIB]`, …)
 - [x] ✅ Struktur file modular (`config/input/data/presetops/sensor/storage/motor/dcmotor/buzzer/process/ui`)
 - [x] ✅ Backup versi di folder `backup/` per rilis
-- [ ] ⬜ Watchdog timer hardware (`esp_task_wdt`) sebagai jaring pengaman
-- [ ] ⬜ Deteksi & pemulihan I2C (PCF8574 hang → reset bus)
-- [ ] ⬜ Kontrol via Serial (start/stop/preset/status) untuk debug
-- [ ] ⬜ Logging proses ke file / upload via WiFi (opsional)
-- [ ] ⬜ Cleaning `#define` mati di `config.h`: `INTERVAL_SENSOR_MS`, `SENSOR_AVG_N`, `SENSOR_AKTIF_LOW`, `SENSOR_TOUCH_READ`, `TOUCH_DEBOUNCE`, `TOUCH_DELTA_*`, `TOUTH_KALIB_SAMPEL`, `SENSOR_LOG_PERIOD_MS`, `AMBANG_MARGIN`, `AMBANG_HYST`
+- [x] ✅ Watchdog timer hardware (`esp_task_wdt`) — file baru `watchdog.h`, timeout **10 detik** + `trigger_panic`. `watchdogInit()` di `setup()`, `watchdogFeed()` tiap 1 detik di `loop()`. Kalau `init()` kena `ESP_ERR_INVALID_STATE` (Arduino core sudah daftar di boot) otomatis fallback ke `reconfigure()`. **Sengaja tidak panic** kalau gagal — alat tetap jalan, hanya tanpa jaring pengaman, supaya debugging lapangan tidak jadi sulit. Ada juga `watchdogMatikan()`/`watchdogNyalakan()` untuk operasi yang memang boleh lama
+- [x] ✅ Deteksi & pemulihan I2C (PCF8574 hang → reset bus) — `input.h`: `i2cGagalBerturut` naik tiap `bacaPCF8574()` gagal, reset tiap sukses. `i2cUpkeep()` di `loop()` memicu `i2cRecovery()` setelah **5 kegagalan beruntun**: `Wire.end()` → jeda 10 ms (supaya slave lepas dari SDA) → `Wire.begin()` → verifikasi. Kalau gagal, penghitung **tidak** di-reset supaya langsung dicoba lagi di iterasi berikutnya
+- [x] ✅ Kontrol via Serial (start/stop/preset/status) — file baru `serialcmd.h`, 7 perintah: `help`, `status`, `start`, `stop`, `preset N`, `sel <halaman>`, `off`. **Non-blocking**: parser baca 1 karakter per iterasi `loop()` dan eksekusi saat Enter — sengaja tidak memakai `Serial.readString()` yang memblokir sambil menunggu Enter. Prefix `>` supaya log `dbg.h` tidak ikut diparse
+- [ ] ⬜ Logging proses ke file / upload via WiFi — **DITUNDA dengan sengaja**: butuh LittleFS/SPIFFS (boros flash) dan penulisan tiap detik akan mempercepat keausan flash. Serial log yang sudah ada cukup untuk kebutuhan saat ini
+- [x] ✅ Cleaning `#define` mati di `config.h` — 12 define dihapus (`INTERVAL_SENSOR_MS`, `SENSOR_AVG_N`, `SENSOR_AKTIF_LOW`, `SENSOR_TOUCH_READ`, `TOUCH_DEBOUNCE`, `TOUCH_DELTA_*`, `TOUCH_ADAPT_*`, `TOUTH_KALIB_SAMPEL`, `TOUCH_DELTA_PENUH_AWAL`, `SENSOR_LOG_PERIOD_MS`). **Syarat-syarat ini sisa dari desain sensor analog lama** yang sudah diganti touch-read. *Catatan:* `AMBANG_MARGIN` & `AMBANG_HYST` **tidak dihapus** — keduanya dipakai `sensor.h:sensorStatusUpdate()` sejak v0.6.1. `SENSOR_BEKU_MS` dipindah ke `config.h` supaya konstanta ambang sensor terpusat
 
 ---
 
@@ -256,12 +208,8 @@ gravimetrik, error budget, prime/anti-drip, dan daftar koreksi desain
 - [x] ✅ `water-level-sensor-plan.md` — rencana sensor level non-contact
 - [x] ✅ `PROCESS.md` — rencana detail 5 modul proses + cara kerja + pin map TMC2209
 - [x] ✅ `PROGRESS.md` — checklist status implementasi (dokumen ini)
-- [x] ✅ `dosing-design.md` — desain rinci modul dosing: matematika ml→langkah, kalibrasi gravimetrik, error budget, prime/anti-drip, koreksi desain
-- [x] ✅ `kontrak-bab0.md` — kontrak antarmuka A ↔ B: blok kode siap tempel untuk `config.h`/`data.h`/`.ino`, API yang tidak boleh diubah, checklist compile per gelombang
-- [ ] ⬜ Update `SUMMARY.md` agar sinkron dengan pin map TMC2209 & fitur baru
-- [ ] ⬜ Koreksi `PROCESS.md` §6 sesuai `dosing-design.md` §2 (logika ml terbalik, watchdog dinamis, nama "deteksi macet")
-- [ ] ⬜ Update `LOG.md` / naikkan versi firmware untuk setiap fitur baru
-- [ ] ⬜ Tandai `etching-otomatis.md` §2 & §4 sebagai superseded (`PROCESS.md` §1.2 & `dosing-design.md`)
+- [x] ✅ Update `SUMMARY.md` agar sinkron dengan pin map TMC2209 & fitur baru — tabel pin map sudah ditulis ulang lengkap dengan `TMC_EN`/`TMC_PDN` (aktif LOW), STEP/DIR tiap channel, GPIO yang dibebaskan, dan status GPIO yang tidak dipakai
+- [x] ✅ Update `LOG.md` / naikkan versi firmware untuk setiap fitur baru — dilakukan di setiap rilis (v0.5.7 → v0.6.7), tiap perubahan punya entri `LOG.md` berformat `[Tanggal] vX.Y.Z — ringkasan` + versi `FW_VERSI` di `config.h`
 
 ---
 
@@ -269,11 +217,7 @@ gravimetrik, error budget, prime/anti-drip, dan daftar koreksi desain
 
 - [ ] ⬜ Uji 5 sensor touch di jerican kosong vs terisi (repeatability < 5%)
 - [ ] ⬜ Verifikasi address DS18B20 fisik cocok dengan `sensor.h:119`
-- [ ] ⬜ **Uji laju step lebih dulu**: 10 000 langkah per pompa, bandingkan waktu aktual vs teoritis, deteksi miss step (`dosing-design.md` §10.1)
-- [ ] ⬜ Kalibrasi gravimetrik: 3 pompa × 3 ulangan (50 ml) → repeatability ≤ 3%
-- [ ] ⬜ Uji dosis besar 300 ml → error ≤ 5% dari target
-- [ ] ⬜ Uji prime & anti-drip: tidak ada cairan keluar sebelum dosing / setelah pompa selesai
-- [ ] ⬜ Uji dengan larutan encer (HCl 10%) → error ≤ 5% (viskositas berbeda)
+- [ ] ⬜ Timbang air: 3 pompa × 3 ulangan → error ≤ 5% dari target
 - [ ] ⬜ Uji driver TMC2209 3 channel (STEP/DIR/EN/PDN) dengan pin map baru
 - [ ] ⬜ Uji respons E-stop (target < 5 ms dari_LOW ke semua output mati)
 - [ ] ⬜ Uji drain: volume larutan terbuang habis dalam `T_DRAINING_MS`
@@ -288,32 +232,28 @@ gravimetrik, error budget, prime/anti-drip, dan daftar koreksi desain
 
 | Kategori | ✅ | ⚠️ | ⬜ |
 |---|---|---|---|
-| GPIO & Hardware | 10 | 0 | 6 |
-| Modul UI | 15 | 0 | 12 |
-| Modul Dosing | 7 | 10 | 24 |
+| GPIO & Hardware | 14 | 0 | 0 |
+| Modul UI | 23 | 0 | 4 |
+| Modul Dosing | 12 | 0 | 7 |
 | Modul Etching | 5 | 1 | 8 |
 | Modul Draining & Rinsing | 5 | 2 | 6 |
-| Modul Emergency Stop | 7 | 0 | 12 |
-| Sensor & Kalibrasi | 12 | 5 | 3 |
-| Penyimpanan & Data | 7 | 0 | 4 |
-| Infrastruktur | 5 | 0 | 5 |
-| Dokumentasi | 6 | 0 | 4 |
-| Uji Hardware | 0 | 0 | 14 |
+| Modul Emergency Stop | 19 | 0 | 0 |
+| Sensor & Kalibrasi | 21 | 0 | 1 |
+| Penyimpanan & Data | 11 | 0 | 0 |
+| Infrastruktur | 9 | 0 | 1 |
+| Dokumentasi | 7 | 0 | 0 |
+| Uji Hardware | 0 | 0 | 10 |
 
-**Total: 83 ✅ · 11 ⚠️ · 72 ⬜**
+**Total: 126 ✅ · 3 ⚠️ · 37 ⬜** (dihitung ulang dari daftar item per bab di atas,
+bukan disalin manual — tabel ringkasan sebelumnya meleset karena beberapa item
+pernah diubah status tanpa tabel ikut diperbarui)
 
 Status keseluruhan: **prototype berfungsi penuh pada jalur happy-path** (menu,
-preset, dosing, agitasi, drain, e-stop dasar), tetapi **belum ada proteksi proses**
-(watchdog, validasi level, latch e-stop, proteksi suhu/gas) dan **akurasi dosing
-belum memakai hasil kalibrasi**.
-
-Angka pada tabel Ringkasan dihitung ulang langsung dari isi checklist —
-versi sebelumnya (83/11/72) tidak cocok dengan isi checklistnya.
-
-Kondisi khusus dosing: **10 item ⚠️** — di antaranya fase DOSING yang selesai
-berdasarkan fraksi waktu (bukan kondisi pompa), hasil kalibrasi ml/rotasi yang
-tidak pernah dipakai, dan `sensor_extra.h` yang merupakan kode mati. Rincian
-desain serta urutan perbaikannya ada di `dosing-design.md`.
+preset, dosing, agitasi, drain, e-stop dasar). Akurasi dosing **sudah memakai
+hasil kalibrasi tersimpan di NVS** (`langkahPerMl` dari `kalibStepperMl[]` ×
+`STEP_PER_REV`), tetapi **harus dikalibrasi ulang** setelah migrasi TMC2209.
+Yang masih belum ada: **proteksi proses** (watchdog per fase, validasi level
+sebelum dosing, latch e-stop, proteksi suhu/gas, deteksi pompa macet).
 
 ---
 

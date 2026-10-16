@@ -56,24 +56,16 @@
 #define PIN_LEVEL_H2O       13
 #define PIN_LEVEL_SABUN     14
 #define PIN_LEVEL_LIMBAH    3
-#define INTERVAL_SENSOR_MS  50     // periode baca sensor
-#define SENSOR_AVG_N        4      // rata-rata bergerak (sampel)
-#define AMBANG_MARGIN       10     // ENTER di Level Cairan: ambang = nilai sekarang - margin
-#define AMBANG_HYST         3      // histeresis di sekitar ambang
-#define SENSOR_AKTIF_LOW    1      // 1 = sensor aktif saat LOW (untuk mode digitalRead)
-#define SENSOR_TOUCH_READ   1      // 1 = touchReadRaw (strip nikel langsung ke pin sentuh)
-#define TOUCH_DEBOUNCE      3      // jumlah sampel berturut-turut sebelum state berubah
-// Ambang relatif (persen dari baseline) + kecepatan adaptasi baseline.
-// Tidak ada asumsi arah: nilai bisa naik ATAU turun saat ada cairan/sentuhan.
-#define TOUCH_DELTA_PERSEN  6      // dianggap berubah bila |raw-baseline| > 6% baseline
-#define TOUCH_DELTA_MIN     300    // minimal selisih absolut (untuk raw kecil)
-#define TOUCH_ADAPT_CEPAT   8      // adaptasi baseline saat nilai dekat
-#define TOUCH_ADAPT_LAMBAT  512    // adaptasi baseline saat nilai jauh (jangan serap sentuhan)
-#define TOUTH_KALIB_SAMPEL  40     // jumlah sampel awal untuk mencari baseline (kering)
-// Nilai |delta| touch yang dianggap 100% level (hanya sampai tangki dikalibrasi
-// di halaman Level Cairan; nilai ini hanya nilai awal saat belum dikalibrasi).
-#define TOUCH_DELTA_PENUH_AWAL 600
-#define SENSOR_LOG_PERIOD_MS 1000  // cetak diagnostik raw semua sensor (0 = mati)
+
+// Ambang status ISI/KOSONG (dipakai `sensor.h:sensorStatusUpdate()`):
+// naik ke ADA saat persen >= MARGIN, turun lagi saat < MARGIN - HYST, supaya
+// indikator tidak berkedip saat level berdiri tepat di ambang.
+#define AMBANG_MARGIN       10     // %
+#define AMBANG_HYST         3      // %
+
+// Berapa lama `touchRead()` harus beku di 0 sebelum sensor dicurigai mati
+// (kabel putus / strip copot). Dipakai `sensor.h:sensorMatiUpdate()`.
+#define SENSOR_BEKU_MS      60000UL
 
 // Driver TB6612FNG x2 (1 arah: INA->3.3V, INB->GND)
 #define PIN_PWA_D1          15    // driver 1 PWA: motor agitasi
@@ -81,21 +73,50 @@
 #define PIN_PWA_D2          17    // driver 2 PWA: pompa limbah (drain)
 #define PIN_PWB_D2          18    // driver 2 PWB: exhaust fan
 
-// ===== PIN MAP (ESP32-S3) - dipakai mulai Step 5/6 =====
-// Stepper DRV8825 (pompa peristaltik)
-#define PIN_SLP1        1     // HCl
-#define PIN_STEP1       2
-#define PIN_DIR1        42
-#define PIN_SLP2        41    // H2O2
-#define PIN_STEP2       40
-#define PIN_DIR2        39
-#define PIN_SLP3        38    // H2O
-#define PIN_STEP3       47
-#define PIN_DIR3        21
+// ===== PIN MAP (ESP32-S3) =====
+// Stepper TMC2209 x3 (pompa peristaltik) — pengganti DRV8825.
+// EN & PDN di-OR-kan ke ketiga driver (1 pasang pin untuk 3 channel).
+#define PIN_TMC_EN      1      // enable seluruh driver (AKTIF LOW)
+#define PIN_TMC_PDN     2      // power-down / reset seluruh driver (AKTIF LOW)
+#define PIN_STEP1       38     // HCl
+#define PIN_DIR1        48     // HCl
+#define PIN_STEP2       40     // H2O2
+#define PIN_DIR2        39     // H2O2
+#define PIN_STEP3       42     // Air / H2O
+#define PIN_DIR3        41     // Air / H2O
+
+// TMC2209: EN aktif LOW (driver menyala saat LOW, mati saat HIGH).
+// Konstanta ini hanya penanda polaritas supaya tidak salah tulis di motor.h —
+// jangan diubah kecuali memang memakai driver dengan polaritas kebalikan.
+#define TMC_EN_AKTIF_LOW    1
+// Durasi pulse reset PDN saat init (us) — datasheet TMC2209 butuh reset >= 1 us.
+#define TMC_PDN_RESET_US    5
+
+// Mikrostep TMC2209 = 1/16 -> 200 step x 16 = 3200 step/putaran.
+// PENTING: kalau jumper MS1/MS2 diubah, angka ini harus ikut disesuaikan.
+// Rumus umum: 200 * (2^n) untuk mikrostep 1/2^n.
+#define STEP_PER_REV    3200
 // Lain-lain
 #define PIN_BUZZER      6
-#define PIN_LED_STRIP   7
-#define PIN_DS18B20     10    // 1-Wire (suhu)
+#define PIN_LED_STRIP   7    // WS2812 status sistem (1 LED) - lihat led_strip.h
+
+// ===== RGB WS2812 indikator per sensor (5 sensor) =====
+// GPIO 47 (dari PIN_STEP3 DRV8825 lama) + GPIO 21 (dari PIN_DIR3) kini bebas
+// setelah migrasi ke TMC2209.
+#define SENSOR_LED_ENABLE  1
+#define PIN_LED_SENSOR     47   // bebas sejak migrasi TMC2209
+#define SENSOR_LED_PIXELS  5    // HCl, H2O2, H2O, Sabun, Limbah
+#define SENSOR_LED_BRI     40   // 0-255 (lebih redup dari status supaya tidak menyilaukan)
+// Periode redraw indikator sensor (ms). 250 ms = 4x per detik, cukup untuk
+// level liquid yang berubah lambat tanpa membanjiri bus WS2812.
+#define INTERVAL_LED_SENSOR_MS 250
+// 1-Wire DS18B20. Design final: TIGA sensor pada SATU bus (GPIO10), dibedakan
+// lewat DeviceAddress di `sensor.h` (Motor / Komponen / Chamber). Define
+// per-kanal di bawah hanya sisa dari desain 3-bus yang sudah tidak dipakai.
+#define PIN_DS18B20      10    // bus 1-Wire tunggal untuk 3 sensor DS18B20
+#define PIN_DS_CHAMBER   10    // (dipakai lewat PIN_DS18B20)
+#define PIN_DS_CAIRAN    45    // tidak dipakai — sisa desain 3-bus
+#define PIN_DS_MOTOR     36    // tidak dipakai — sisa desain 3-bus
 #define PIN_MQ135       9     // analog (kualitas udara)
 
 // ===== MQ-135: divider analog sebelum ADC =====
@@ -109,4 +130,4 @@
 #define MQ135_RLOAD   10.0     // resistor load modul (kOhm)
 #define PIN_ESTOP       8     // estop_sense
 
-#define FW_VERSI  "v0.5.4"
+#define FW_VERSI  "v0.7.3"

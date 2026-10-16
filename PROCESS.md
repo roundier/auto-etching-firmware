@@ -28,59 +28,51 @@ Status implementasi terdokumentasi di `PROGRESS.md`.
 | 1 | 4 | I2C SDA — OLED SSD1306 (0x3C) + PCF8574 (0x20) | ✅ Sudah |
 | 2 | 5 | I2C SCL — OLED SSD1306 (0x3C) + PCF8574 (0x20) | ✅ Sudah |
 
-### 1.2 Motor Stepper Pompa Peristaltik (TMC2209 ×3) — **PIN MAP DIPERBAIKI**
+### 1.2 Motor Stepper Pompa Peristaltik (TMC2209 ×3) — **PIN MAP SUDAH DITERAPKAN (v0.6.0)**
 
-> **Perubahan hardware (terjadi setelah firmware v0.5.0 ditulis).**
-> Driver pompa stepper diganti dari **DRV8825** menjadi **TMC2209**, dan
-> pasangan pin setiap channel berubah. Pin `SLP` (sleep) tidak lagi dipakai;
-> digantikan oleh `EN` (enable driver) dan `PDN` (power-down) yang dikendalikan
-> software. Mikrostep juga diatur lewat UART resistor, bukan jumper MS1/MS2/MS3.
+> **Status: SELESAI.** Driver pompa stepper sudah diganti dari **DRV8825**
+> menjadi **TMC2209**. Pin `SLP` (sleep) tidak lagi dipakai; digantikan oleh
+> `EN` (enable driver) dan `PDN` (power-down/reset) yang dikendalikan software.
+> Mikrostep diset **1/16 = 3200 step/rev** (rumus umum `200 x 2^n`).
 
 | No. | GPIO | Connected to | Configured? |
 |---|---|---|---|
-| 3 | 38 | **STEP Pompa HCl** (TMC2209 channel 1) | ⬜ Belum — `config.h` masih `PIN_SLP3` |
-| 4 | 48 | **DIR Pompa HCl** (TMC2209 channel 1) | ⬜ Belum — `config.h` masih `PIN_DIR1` |
-| 5 | 39 | **DIR Pompa H2O2** (TMC2209 channel 2) | ✅ Sudah (koheren: `PIN_DIR2`) |
-| 6 | 40 | **STEP Pompa H2O2** (TMC2209 channel 2) | ✅ Sudah (koheren: `PIN_STEP2`) |
-| 7 | 41 | **DIR Pompa Air / H2O** (TMC2209 channel 3) | ⬜ Belum — `config.h` masih `PIN_SLP2` |
-| 8 | 42 | **STEP Pompa Air / H2O** (TMC2209 channel 3) | ⬜ Belum — `config.h` masih `PIN_DIR1` |
-| 9 | 1 | **TMC_EN** — enable seluruh driver TMC2209 | ⬜ Belum — `config.h` masih `PIN_SLP1` |
-| 10 | 2 | **TMC PDN** — power-down / reset seluruh driver | ⬜ Belum — `config.h` masih `PIN_STEP1` |
+| 3 | 38 | **STEP Pompa HCl** (TMC2209 channel 1) | ✅ Sudah (`PIN_STEP1`) |
+| 4 | 48 | **DIR Pompa HCl** (TMC2209 channel 1) | ✅ Sudah (`PIN_DIR1`) |
+| 5 | 39 | **DIR Pompa H2O2** (TMC2209 channel 2) | ✅ Sudah (`PIN_DIR2`) |
+| 6 | 40 | **STEP Pompa H2O2** (TMC2209 channel 2) | ✅ Sudah (`PIN_STEP2`) |
+| 7 | 41 | **DIR Pompa Air / H2O** (TMC2209 channel 3) | ✅ Sudah (`PIN_DIR3`) |
+| 8 | 42 | **STEP Pompa Air / H2O** (TMC2209 channel 3) | ✅ Sudah (`PIN_STEP3`) |
+| 9 | 1 | **TMC_EN** — enable seluruh driver TMC2209 | ✅ Sudah (`PIN_TMC_EN`) |
+| 10 | 2 | **TMC PDN** — power-down / reset seluruh driver | ✅ Sudah (`PIN_TMC_PDN`) |
 
-**Catatan penting pin map baru:**
-
-1. **GPIO 1 & 2 dipakai bersama** (common) untuk ketiga channel TMC2209, bukan
-   per-channel. Jadi hanya ada 1 pasang `EN`/`PDN` untuk 3 driver.
-   → *Perlu konfirmasi konfigurasi fisik PCB*: apakah `EN`/`PDN` benar-benar
-   di-OR-kan antar 3 driver, atau hanya driver #1 yang dikendalikan?
-2. **GPIO 21 dan GPIO 47 menjadi bebas** (semula `DIR3` dan `STEP3`) — bisa
-   dipakai untuk sensor level tambahan (mis. tangki proses) atau LED status.
-3. **GPIO 48 sebelumnya direncanakan untuk WS2812** pada
-   `water-level-sensor-plan.md`. Sekarang dipakai sebagai `DIR Pompa HCl`
-   → **konflik LED strip sudah terselesaikan**; bila LED status masih
-   dibutuhkan, pindahkan ke GPIO 21 atau 47.
-4. **GPIO 7 (`PIN_LED_STRIP`) masih didefinisikan di `config.h` tetapi belum
-   dipakai kode apa pun.** Dibiarkan sebagai status/indicator (opsional).
-5. Mikrostep TMC2209 diatur via **UART** (resistor pull-up ke VCC pada pin MS1/MS2
-   atau jumper), sehingga **tidak butuh GPIO MS1/MS2/MS3** seperti DRV8825.
-   Konfirmasi mode mikrostep yang dipakai (mis. 1/16 = 3200 step/rev).
-6. Dengan TMC2209, `langkahPerMl` harus dihitung ulang dari step/rev yang
-   sebenarnya (bukan asumsi 7200 step/rev DRV8825 1/36).
-
-**Nilai `#define` yang perlu diubah di `config.h`:**
+**Konstanta baru di `config.h`:**
 
 ```cpp
-// LAMA (v0.5.0 - DRV8825)          BARU (TMC2209)
-#define PIN_SLP1  1                   #define PIN_TMC_EN   1
-#define PIN_STEP1 2                   #define PIN_TMC_PDN  2
-#define PIN_DIR1  42                  #define PIN_STEP1   38
-#define PIN_SLP2  41                  #define PIN_DIR1    48
-#define PIN_STEP2 40                  #define PIN_STEP2   40
-#define PIN_DIR2  39                  #define PIN_DIR2    39
-#define PIN_SLP3  38                  #define PIN_STEP3   42
-#define PIN_STEP3 47                  #define PIN_DIR3    41
-#define PIN_DIR3  21                  // (SLP1/SLP2/SLP3 dihapus)
+#define TMC_EN_AKTIF_LOW  1     // EN aktif LOW (kebalikan dari SLP DRV8825!)
+#define TMC_PDN_RESET_US  5     // durasi pulse reset PDN (>= 1 us datasheet)
+#define STEP_PER_REV      3200  // mikrostep 1/16 = 200 x 16
 ```
+
+**Catatan penting:**
+
+1. **GPIO 1 & 2 dipakai bersama** (common) untuk ketiga channel TMC2209 — sudah
+   dikonfirmasi, jadi `motorInit()` cukup menulis 1x dan `stepperSleep(true)`
+   mematikan semua driver sekaligus.
+2. **Polaritas EN terbalik.** DRV8825 `SLP` = HIGH berarti aktif; TMC2209 `EN`
+   = **LOW** berarti aktif. Salah tulis → driver selalu tidur, pompa diam.
+   `motorInit()` melakukan: pin mode → `stepperSleep(true)` → pulse reset PDN
+   (LOW 5 µs → HIGH) → `stepperSleep(false)`.
+3. **GPIO 21 dan GPIO 47 menjadi bebas** (semula `DIR3` dan `STEP3`) — GPIO 47
+   sekarang dipakai strip RGB indikator per sensor (`SENSOR_LED_ENABLE 1`).
+4. **GPIO 7 (`PIN_LED_STRIP`)** sudah dipakai kode — `led_strip.h` untuk status
+   sistem (biru breathing saat proses, merah saat E-stop, dll).
+5. **Kalibrasi dosing WAJIB diulang** — `langkahPerMl` berubah dari basis 7200
+   (DRV8825 1/36) ke 3200 step/rev (TMC2209 1/16). Nilai lama di NVS blob
+   `"kal3"` tidak valid.
+6. **`STEP_INTERVAL_US` 400 → 1200 µs** — 3 pompa paralel dengan 400 µs berisiko
+   kehilangan langkah; 1200 µs (~830 Hz) cukup aman dan tetap jauh di bawah
+   kecepatan maksimum TMC2209.
 
 ---
 
@@ -448,11 +440,15 @@ sesuai keputusan "fixed time".
 
 ## 12. Pertanyaan Terbuka
 
-1. Apakah `TMC_EN` / `TMC_PDN` (GPIO 1 & 2) **shared** oleh 3 channel, atau
-   hanya untuk driver #1? → menentukan apakah `motorInit()` menulis 1 atau 3 pin.
-2. Mikrostep TMC2209 yang dipakai berapa (step/rev)?
+1. ~~Apakah `TMC_EN` / `TMC_PDN` (GPIO 1 & 2) **shared** oleh 3 channel?~~
+   **TERJAWAB: shared** — `motorInit()` menulis 1x, `stepperSleep(true)`
+   mematikan 3 driver sekaligus.
+2. ~~Mikrostep TMC2209 yang dipakai berapa?~~ **TERJAWAB: 1/16 = 3200 step/rev**
+   (`STEP_PER_REV`). Kalau jumper MS1/MS2 di driver diubah, konstanta ini harus
+   ikut disesuaikan.
 3. Kapasitas tiap tangki (jerican) berapa ml → untuk `VOL_TANGKI_*`.
-4. Apakah perlu sensor level tambahan di **tangki proses**? (GPIO 21/47 bebas)
+4. Apakah perlu sensor level tambahan di **tangki proses**? (GPIO 21 masih bebas;
+   GPIO 47 sudah dipakai strip RGB indikator per sensor)
 5. Batas suhu aman chamber & komponen yang sesuai dengan material PCB.
 
 ---

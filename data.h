@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <Arduino.h>
 
 // ================= DATA PRESET =================
@@ -48,7 +48,6 @@ enum Halaman {
   HAL_PRESET_LIST,
   HAL_PRESET_DETAIL,
   HAL_PROSES,
-  HAL_PLACEHOLDER,
   HAL_CFG_LIST,
   HAL_CFG_AKSI,
   HAL_CFG_EDIT,
@@ -62,17 +61,60 @@ enum Halaman {
   HAL_KALIB_AGITASI,
 HAL_KALIB_FAN,
   HAL_KALIB_SUHU,
-  HAL_KALIB_UDARA
+  HAL_KALIB_UDARA,
+  HAL_ALARM
 };
 const char* namaHalaman[] = {
-  "MENU_UTAMA", "PRESET_LIST", "PRESET_DETAIL", "PROSES", "PLACEHOLDER",
+  "MENU_UTAMA", "PRESET_LIST", "PRESET_DETAIL", "PROSES",
   "CFG_LIST", "CFG_AKSI", "CFG_EDIT", "LEVEL", "KALIB_MAIN", "KALIB_LEVEL", "KALIB_LEVEL_SET",
 "KALIB_MOTOR_LIST", "KALIB_STEPPER", "KALIB_DC", "KALIB_AGITASI", "KALIB_FAN",
-  "KALIB_SUHU", "KALIB_UDARA"
+  "KALIB_SUHU", "KALIB_UDARA", "ALARM"
+};
+
+// ================= KODE ERROR / ALARM (v0.7.3) =================
+// Setiap kondisi abnormal punya SATU kode, dan `prosesGagal(kode)` adalah satu-
+// satu-satunya jalan keluarnya. Tujuannya: tidak ada lagi jalur "mati mendadak"
+// yang punya efek samping berbeda-beda.
+//
+// Sengaja TIDAK menambah nilai baru ke `enum FaseProses` (mis. FASE_GAGAL):
+// `namaFase[]` diindeks oleh enum itu di beberapa tempat, dan menambah nilai
+// berarti menyentuh setiap switch pada fase. `prosesError != ERR_NONE` sudah
+// cukup sebagai penanda alarm, dengan `prosesFase` tetap FASE_IDLE.
+enum KodeError {
+  ERR_NONE = 0,
+  ERR_ESTOP,          // tombol E-stop ditekan
+  ERR_SENSOR,         // sensor level / DS18B20 mati atau tidak valid
+  ERR_LEVEL_KURANG,   // volume tangki tidak cukup
+  ERR_STEP_MACET,     // pompa jalan tapi langkah tidak bertambah
+  ERR_TIMEOUT,        // fase berjalan melebihi batas waktu
+  ERR_OVERFLOW,       // tangki limbah hampir penuh
+  ERR_SUHU            // suhu melebihi batas aman
+};
+
+const char* namaError[] = {
+  "OK", "E-STOP", "SENSOR", "LEVEL KURANG",
+  "POMPA MACET", "TIMEOUT", "OVERFLOW", "SUHU"
+};
+
+// Apa yang harus dilakukan operator. Satu kalimat, ditampilkan di HAL_ALARM.
+const char* pesanError[] = {
+  "",
+  "Tekan E-stop. Lepas tombol, lalu BACK.",
+  "Sensor tidak terbaca. Periksa kabel & power sensor.",
+  "Cairan tangki kurang. Isi ulang lalu ulangi.",
+  "Pompa tidak bergerak. Cek selang, konektor, dan motor.",
+  "Fase berjalan terlalu lama. Proses dihentikan demi keamanan.",
+  "Tangki limbah hampir penuh. Kosongkan lalu ulangi.",
+  "Suhu terlalu tinggi. Tunggu turun lalu ulangi."
 };
 
 Halaman halaman = HAL_MENU_UTAMA;
 int presetTerpilih = 0;
+
+// Kode alarm aktif. != ERR_NONE berarti proses berhenti abnormally dan layar
+// HAL_ALARM yang harus tampil. Di-reset hanya lewat jalur pemulihan (BACK),
+// bukan otomatis.
+KodeError prosesError = ERR_NONE;
 
 // Dirty flag: layar hanya digambar ulang kalau true
 bool perluGambar = true;
@@ -100,23 +142,26 @@ float kalibStepperMl[3] = {1.0, 1.0, 1.0};  // ml per rotasi untuk HCl, H2O2, Ai
 int kalibDCCursor = 0;        // 0=START, 1=duty, 2=ml
 int kalibDuty[7] = {128, 128, 128, 128, 128, 128, 128};  // Sabun, Limbah, Agitasi SPD1-3, Fan
 float kalibMl[2] = {0, 0};  // ml hasil test untuk Sabun, Limbah
-bool kalibMotorRunning = false;  // true = motor sedang berjalan
+bool kalibMotorRunning = false;  // true = motor kalibrasi sedang berjalan
 unsigned long kalibMotorStartMs = 0;
-int kalibMotorRunMs = 2000;    // durasi test default 2 detik
+unsigned long kalibMotorSelesaiMs = 0;  // deadline (ms) test motor kalibrasi
+int kalibMotorJenis = 0;         // 0=tidak ada, 1=agitasi, 2=agitasi semua, 3=fan
+int kalibMotorStep = 0;          // untuk agitasi-semua: kecepatan sedang diuji
+int kalibMotorRunMs = 2000;      // durasi test default 2 detik
 
-// State Kalibrasi Sensor Suhu (3 blok)
+// State Kalibrasi Sensor Suhu (3 blok: Motor / Komponen / Chamber)
 #define JUMLAH_SUHU 3
 const char* namaSensorSuhu[JUMLAH_SUHU] = {
   "Suhu Motor", "Suhu Komponen", "Suhu Chamber"
 };
 int kalibSuhuIdx    = 0;       // blok terpilih
 int kalibSuhuScroll = 0;       // scroll offset halaman suhu
-int kalibSuhuField  = 0;       // 0 = addr sensor, 1 = suhu saat ini
+int kalibSuhuField  = 0;       // 0 = addr sensor, 1 = offset suhu
 const int SUHU_ROW_TOP[3]  = { 0, 26, 52 };   // offset dari HEADER_H+3 (gap 4px antar blok)
 const int SUHU_ROW_H       = 22;              // tinggi tiap blok
 const int SUHU_CONTENT_H   = SUHU_ROW_TOP[2] + SUHU_ROW_H + 3;
 
-// State Kalibrasi Sensor Udara (MQ-135)
+// State Kalibrasi Sensor Udara (MQ-135): rekam acuan udara bersih & kotor
 int kalibUdaraSel    = 0;     // 0 = normal, 1 = kotor
 int mq135Normal      = 0;     // acuan udara bersih (ppm)
 int mq135Kotor       = 0;     // acuan udara kotor (ppm)

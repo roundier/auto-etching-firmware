@@ -1,4 +1,4 @@
-/*
+﻿/*
   Menu OLED 6 Tombol - v0.5.0
   Perubahan dari v0.4.1:
     - sensor.h: sensor level sekarang baca GPIO langsung (ganti MPR121 I2C)
@@ -31,7 +31,10 @@
 #include "sensor.h"
 #include "storage.h"
 #include "buzzer.h"
+#include "led_strip.h"
+#include "watchdog.h"
 #include "process.h"
+#include "serialcmd.h"
 #include "ui.h"
 
 unsigned long waktuRenderTerakhir = 0;
@@ -44,6 +47,45 @@ int dbgJumlahRender = 0;
 // ================= HELPER KONFIGURASI =================
 void simpanDanToast(const char* ok) {
   tampilToast(simpanPreset() ? ok : "Gagal simpan!");
+}
+
+// ================= TEST MOTOR KALIBRASI (NON-BLOCKING) =================
+// Halaman Kalibrasi Agitasi & Fan sebelumnya memakai delay(1000..2000) sehingga
+// UI beku dan tombol tidak responsif. Sekarang dijadwalkan lewat millis() dan
+// dicek di loop() lewat upkeepKalibrasiMotor().
+//
+// jenis: 1 = agitasi 1 kecepatan · 2 = agitasi semua kecepatan · 3 = fan
+void mulaiTestMotor(int jenis, int durasiMs) {
+  kalibMotorJenis    = jenis;
+  kalibMotorRunning  = true;
+  kalibMotorStartMs  = millis();
+  kalibMotorSelesaiMs = kalibMotorStartMs + durasiMs;
+  perluGambar = true;
+}
+
+void upkeepKalibrasiMotor() {
+  if (!kalibMotorRunning) return;
+  if ((long)(millis() - kalibMotorSelesaiMs) < 0) return;
+
+  if (kalibMotorJenis == 2) {
+    // Masih ada kecepatan berikutnya? lanjutkan tanpa jeda.
+    if (kalibMotorStep < 3) {
+      kalibMotorStep++;
+      agitasiSet(kalibMotorStep);
+      kalibMotorSelesaiMs += 1000;
+      char tb[16];
+      snprintf(tb, sizeof(tb), "Test %d/3...", kalibMotorStep);
+      tampilToast(tb);
+      perluGambar = true;
+      return;
+    }
+  }
+
+  agitasiSet(0);
+  fanSet(false);
+  kalibMotorRunning = false;
+  tampilToast("Done");
+  perluGambar = true;
 }
 
 void editGeserField(int delta) {
@@ -75,6 +117,21 @@ void tanganiTombol(int t) {
   perluGambar = true;
 
   switch (halaman) {
+
+    case HAL_ALARM:
+      // Pemulihan DIBATASI: E-stop hanya bisa dilepas lewat BACK di sini, dan
+      // hanya kalau pin sudah HIGH. Kalau masih ditekan, BACK diabaikan supaya
+      // operator tidak bisa me-reset latch dengan tangan masih di tombol.
+      if (t == P_BACK) {
+        if (digitalRead(PIN_ESTOP) == LOW) {
+          dbg.println(F("[ALARM] BACK diabaikan: E-stop masih ditekan"));
+          tampilToast("E-stop masih ditekan");
+        } else {
+          dbg.println(F("[ALARM] Dipulihkan oleh operator"));
+          prosesPulihkan();
+        }
+      }
+      break;
 
     case HAL_MENU_UTAMA:
       if (t == P_ATAS)  listGeser(L_UTAMA, -1, JUMLAH_MENU);
@@ -141,10 +198,6 @@ void tanganiTombol(int t) {
       }
       break;
 
-    case HAL_PLACEHOLDER:
-      if (t == P_BACK) pindahHalaman(HAL_MENU_UTAMA);
-      break;
-
     // ---------- Level Cairan ----------
     case HAL_LEVEL:
       if (t == P_ATAS) {
@@ -178,10 +231,10 @@ void tanganiTombol(int t) {
           kalibSetStep = 0;
           pindahHalaman(HAL_KALIB_LEVEL);
         } else if (a == 2) {
-          // Sensor Suhu
-          kalibSuhuIdx = 0;
+          // Sensor Suhu -> 3 blok (Motor / Komponen / Chamber), scroll di dalam
+          kalibSuhuIdx    = 0;
           kalibSuhuScroll = 0;
-          kalibSuhuField = 0;
+          kalibSuhuField  = 0;
           pindahHalaman(HAL_KALIB_SUHU);
         } else if (a == 3) {
           // Sensor Udara (MQ-135)
@@ -220,7 +273,11 @@ void tanganiTombol(int t) {
 
     // ---------- Kalibrasi Stepper (Pompa HCl/H2O2/Air) ----------
     case HAL_KALIB_STEPPER:
-      if (t == P_BACK) { pindahHalaman(HAL_KALIB_MOTOR_LIST); break; }
+      if (t == P_BACK) {
+        simpanKalibStepper();  // simpan kalibrasi stepper ke NVS
+        pindahHalaman(HAL_KALIB_MOTOR_LIST);
+        break;
+      }
       if (t == P_ATAS || t == P_BAWAH) {
         kalibStepperCursor = 1 - kalibStepperCursor;
         break;
@@ -244,7 +301,13 @@ void tanganiTombol(int t) {
 
     // ---------- Kalibrasi DC (Pompa Sabun/Limbah) ----------
     case HAL_KALIB_DC:
-      if (t == P_BACK) { kalibDCScroll = 0; pindahHalaman(HAL_KALIB_MOTOR_LIST); break; }
+      if (t == P_BACK) {
+        kalibDCScroll = 0;
+        if (kalibMotorRunning) { pompaSabunSet(false); pompaLimbahSet(false); kalibMotorRunning = false; }
+        simpanKalib4();
+        pindahHalaman(HAL_KALIB_MOTOR_LIST);
+        break;
+      }
       if (t == P_ATAS || t == P_BAWAH) {
         kalibDCCursor = (kalibDCCursor + 1) % 3;
         // Auto-scroll: pastikan baris terpilih sepenuhnya terlihat
@@ -290,7 +353,12 @@ void tanganiTombol(int t) {
 
     // ---------- Kalibrasi Agitasi ----------
     case HAL_KALIB_AGITASI:
-      if (t == P_BACK) { pindahHalaman(HAL_KALIB_MOTOR_LIST); break; }
+      if (t == P_BACK) {
+        if (kalibMotorRunning) { agitasiSet(0); kalibMotorRunning = false; }
+        simpanKalib4();
+        pindahHalaman(HAL_KALIB_MOTOR_LIST);
+        break;
+      }
       if (t == P_ATAS || t == P_BAWAH) {
         kalibDCCursor = (kalibDCCursor + 1) % 4;
         break;
@@ -304,25 +372,28 @@ void tanganiTombol(int t) {
       }
       if (t == P_ENTER) {
         if (kalibDCCursor == 3) {
-          // Test all speeds
-          for (int s = 1; s <= 3; s++) {
-            agitasiSet(s);
-            delay(1000);
-          }
-          agitasiSet(0);
-          tampilToast("Done");
+          // Test semua kecepatan berurutan. Non-blocking: tiap kecepatan
+          // dijadwalkan lewat upkeepKalibrasiMotor() di loop().
+          kalibMotorStep = 1;
+          agitasiSet(1);
+          mulaiTestMotor(2, 1000);
+          tampilToast("Test 1/3...");
         } else {
           agitasiSet(kalibDCCursor + 1);
-          delay(2000);
-          agitasiSet(0);
-          tampilToast("Done");
+          mulaiTestMotor(1, kalibMotorRunMs);
+          tampilToast("Running...");
         }
       }
       break;
 
     // ---------- Kalibrasi Fan ----------
     case HAL_KALIB_FAN:
-      if (t == P_BACK) { pindahHalaman(HAL_KALIB_MOTOR_LIST); break; }
+      if (t == P_BACK) {
+        if (kalibMotorRunning) { fanSet(false); kalibMotorRunning = false; }
+        simpanKalib4();
+        pindahHalaman(HAL_KALIB_MOTOR_LIST);
+        break;
+      }
       if (t == P_ATAS || t == P_BAWAH) {
         kalibDCCursor = (kalibDCCursor + 1) % 2;
         break;
@@ -337,23 +408,29 @@ void tanganiTombol(int t) {
       if (t == P_ENTER) {
         if (kalibDCCursor == 1) {
           fanSet(true);
-          delay(2000);
-          fanSet(false);
-          tampilToast("Done");
+          mulaiTestMotor(3, kalibMotorRunMs);
+          tampilToast("Running...");
         }
       }
       break;
 
-// ---------- Kalibrasi Sensor Suhu ----------
+// ---------- Kalibrasi Sensor Suhu (DS18B20, 3 blok) ----------
     case HAL_KALIB_SUHU:
-      if (t == P_BACK) { kalibSuhuScroll = 0; pindahHalaman(HAL_KALIB_MAIN); break; }
+      if (t == P_BACK) {
+        kalibSuhuScroll = 0;
+        // "BACK keluar + simpan" — sama dengan halaman Kalibrasi Motor
+        // Stepper/DC/Agitasi/Fan (lihat SUMMARY.md).
+        tampilToast(simpanKalib2() ? "Kalibrasi tersimpan" : "Gagal simpan!");
+        pindahHalaman(HAL_KALIB_MAIN);
+        break;
+      }
       if (t == P_ATAS)  kalibSuhuIdx = max(0, kalibSuhuIdx - 1);
       if (t == P_BAWAH) kalibSuhuIdx = min(JUMLAH_SUHU - 1, kalibSuhuIdx + 1);
       if (t == P_ENTER) kalibSuhuField = 1 - kalibSuhuField;   // pindah field aktif
       if (t == P_KIRI || t == P_KANAN) {
         int arah = (t == P_KANAN) ? +1 : -1;
         if (kalibSuhuField == 0) {
-          // Field addr: pilih sensor 1..3
+          // Field addr: pilih sensor 1..3 pada bus 1-Wire
           kalibSuhuAddr[kalibSuhuIdx] = constrain(kalibSuhuAddr[kalibSuhuIdx] + arah, 1, 3);
           dbg.print(F("[KALIB-SUHU] "));
           dbg.print(namaSensorSuhu[kalibSuhuIdx]);
@@ -386,7 +463,12 @@ void tanganiTombol(int t) {
 
     // ---------- Kalibrasi Sensor Udara (MQ-135) ----------
     case HAL_KALIB_UDARA:
-      if (t == P_BACK) { pindahHalaman(HAL_KALIB_MAIN); break; }
+      if (t == P_BACK) {
+        // "BACK keluar + simpan" — lihat SUMMARY.md
+        tampilToast(simpanKalib2() ? "Kalibrasi tersimpan" : "Gagal simpan!");
+        pindahHalaman(HAL_KALIB_MAIN);
+        break;
+      }
       if (t == P_ATAS || t == P_BAWAH) kalibUdaraSel = 1 - kalibUdaraSel;
       if (t == P_ENTER) {
         // Rekam bacaan saat ini (ppm) sebagai acuan baris terpilih
@@ -564,6 +646,9 @@ void setup() {
 
   muatPreset();
   muatKalib();
+  muatKalib2();
+  muatKalibStepper();
+  muatKalib4();
 
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(I2C_CLOCK);
@@ -574,14 +659,19 @@ void setup() {
 
   if (!sensorInit())
     dbg.println(F("!! Sensor level tidak siap. Cek wiring GPIO."));
-  sensorSuhuInit();                      // scan address DS18B20 di GPIO10
+  sensorSuhuInit();         // DS18B20 x3 pada 1 bus GPIO10 + scan DeviceAddress
+  udaraInit();             // MQ-135 (GPIO9) — pinMode INPUT
 
   motorInit();
   dcmotorInit();
   buzzerInit();
+  ledStripInit();
+  ledBoot();               // LED biru kelap-kelip selama boot
+  watchdogInit();          // jaring pengaman kalau loop() hang
+#if SENSOR_LED_ENABLE
+  ledSensorInit();         // RGB indikator per sensor (5 LED)
+#endif
   pinMode(PIN_ESTOP, INPUT_PULLUP);
-  pinMode(PIN_MQ135, INPUT);                 // sensor udara MQ-135
-  pinMode(PIN_DS18B20, INPUT);               // sensor suhu (1-Wire, placeholder)
 
   if (!oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
     dbg.println(F("!! OLED tidak terdeteksi di 0x3C. Cek wiring/alamat I2C."));
@@ -601,10 +691,43 @@ void setup() {
   // Nada boot diputar di akhir setup(): kalau dipanggil lebih awal, melodi
   // akan tertahan oleh delay() di atas (buzzerUpdate baru jalan di loop).
   buzzerBoot();
+  ledIdle();               // boot selesai -> LED hijau redup (siap)
 }
 
 // ================= LOOP =================
 void loop() {
+  // ============ E-STOP: PALING ATAS LOOP (v0.7.3) ============
+  // Harus dicek SEBELUM apa pun. Kalau ada urutan lain yang sudah memompa,
+  // menggambar, atau memproses tombol lebih dulu, jeda antara tekanan tombol
+  // dan seluruh aktuator mati bisa mencapai puluhan milidetik — cukup untuk
+  // memompa cairan berbahaya atau membuat motor tetap berputar.
+  //
+  // `continue` berarti selama E-stop aktif tidak ada tombol, proses, motor,
+  // sensor, maupun render yang jalan. Konsekuensinya: layar membeku (tidak
+  // ada render baru) selama tombol ditekan — ini disengaja, operator tidak
+  // butuh layar saat sedang menekan stop.
+  if (estopAktif || digitalRead(PIN_ESTOP) == LOW) {
+    if (!estopAktif) {
+      estopAktif = true;
+      prosesGagal(ERR_ESTOP);       // latch: tidak otomatis lepas
+    }
+    semuaAktuatorMati();            // idempotent - aman tiap iterasi
+    ledEstop();
+
+    // Tiga hal yang TETAP harus jalan selama latch aktif, padahal sisanya
+    // dilewati. Melewatkannya justru merusak keselamatan:
+    //  - buzzerUpdate: kalau dilewati, nada alarm membeku di satu nada
+    //    (tidak pernah maju ke jeda) dan berbunyi tanpa henti selama 10 detik.
+    //  - ledStripUpdate: animasi merah E-stop butuh frame baru.
+    //  - watchdogFeed: menahan E-stop >10 detik akan memicu reset, dan
+    //    reset justru ME-CLEAR latch `estopAktif` - latch yang harus
+    //    bertahan sampai operator mereset secara sadar.
+    buzzerUpdate();
+    ledStripUpdate();
+    watchdogFeed();
+    return;                         // lewati sisa loop
+  }
+
   int t = bacaTombolBaru();
   if (t != TIDAK_ADA) tanganiTombol(t);
 
@@ -612,36 +735,14 @@ void loop() {
   motorUpdate();                             // stepper non-blocking
   sensorUpdate();                            // baca sensor level cairan
   buzzerUpdate();                            // pola nada non-blocking
-
-  // Konversi DS18B20 non-blocking + redraw kalibrasi saat data baru tiba
-  if (halaman == HAL_KALIB_SUHU) {
-    sensorSuhuUpdate();
-    if (sensorSuhuSiapTampil()) perluGambar = true;
-  }
-
-  // Bacaan real-time untuk halaman kalibrasi MQ-135
-  if (halaman == HAL_KALIB_UDARA) {
-    static unsigned long udaraMs = 0;
-    unsigned long now = millis();
-    if (now - udaraMs >= 100) {
-      udaraMs = now;
-      mq135Bacaan = sensorUdaraRaw();
-      perluGambar = true;
-    }
-  }
-
-  // E-stop: hentikan semua aktuator & batalkan proses
-  if (digitalRead(PIN_ESTOP) == LOW) {
-    if (prosesJalan) {
-      prosesBatal();
-      tampilToast("E-STOP!");
-    }
-    agitasiSet(0);
-    pompaLimbahSet(false);
-    pompaSabunSet(false);
-    fanSet(false);
-    pompaStopAll();
-  }
+  upkeepKalibrasiMotor();                   // test motor kalibrasi (non-blocking)
+  i2cUpkeep();                              // recovery bus I2C kalau PCF8574 hang
+  serialCmdUpkeep();                        // perintah dari Serial Monitor
+  watchdogFeed();                           // reset watchdog (tiap 1 detik)
+  ledStripUpdate();                          // animasi LED status (non-blocking)
+#if SENSOR_LED_ENABLE
+  ledSensorUpdate();                       // RGB level 5 tangki (non-blocking)
+#endif
 
   bool animasiBerjalan = false;
   for (int L = 0; L < JUMLAH_LIST; L++) {
@@ -653,6 +754,17 @@ void loop() {
   if (toastAktif && (long)(millis() - toastSampai) >= 0) {
     toastAktif = false;
     perluGambar = true;
+  }
+
+  // Halaman Kalib Suhu/Udara menampilkan angka live (bacaan DS18B20 3 blok,
+  // ppm MQ-135) -> refresh berkala. DS18B20 sendiri sudah dibatasi 1x per
+  // detik di sensorSuhuUpdate() supaya tidak blocking terus.
+  if (halaman == HAL_KALIB_SUHU || halaman == HAL_KALIB_UDARA) {
+    static unsigned long liveKalibMs = 0;
+    if ((long)(millis() - liveKalibMs) >= 300) {
+      liveKalibMs = millis();
+      perluGambar = true;
+    }
   }
 
   unsigned long sekarang = millis();

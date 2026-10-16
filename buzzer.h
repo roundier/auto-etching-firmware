@@ -33,15 +33,21 @@ const Note N_CANCEL[] = {{1568, 120}, {1319, 120}, {1047, 250}};
 const Note N_DONE[]   = {{1047, 110}, {1319, 110}, {1568, 110}, {2093, 400}};
 const Note N_KEY[]    = {{2093, 20}};
 
+// Alarm: nada panjang rendah berulang, jelas berbeda dari "selesai" (nada naik
+// cepat). Diputar terus sampai buzzerAlarmStop(). Polanya 3 beep panjang +
+// jeda pendek, mudah dibedakan dari feedback tombol yang hanya 20 ms.
+const Note N_ALARM[]  = {{440, 400}, {0, 200}, {440, 400}, {0, 200}, {440, 400}};
+
 // ================= SCHEDULER =================
 const Note* melodi     = nullptr;
 int        melodiJumlah = 0;
 int        melodiIndex  = 0;
+bool       melodiUlang  = false;   // true = wrap ke awal, bukan berhenti
 unsigned long melodiNextMs = 0;
 
-void buzzerPutar(const Note* notes, int jumlah) {
+void buzzerPutar(const Note* notes, int jumlah, bool ulang = false) {
   if (jumlah <= 0) { buzzerOff(); melodi = nullptr; return; }
-  melodi = notes; melodiJumlah = jumlah; melodiIndex = 0;
+  melodi = notes; melodiJumlah = jumlah; melodiIndex = 0; melodiUlang = ulang;
   buzzerNada(notes[0].freq);
   melodiNextMs = millis() + notes[0].ms;
 }
@@ -52,11 +58,20 @@ void buzzerMulai()   { buzzerPutar(N_START,  2); }
 void buzzerBatal()   { buzzerPutar(N_CANCEL, 3); }
 void buzzerSelesai() { buzzerPutar(N_DONE,   4); }
 
+// Nada alarm: berulang terus sampai buzzerAlarmStop(). Memakai 3 beep panjang
+// supaya operator tahu ini kondisi abnormal, bukan konfirmasi.
 void buzzerStop() {
   melodi = nullptr;
   melodiJumlah = 0;
+  melodiUlang = false;
   buzzerOff();
 }
+
+void buzzerAlarm()    { buzzerPutar(N_ALARM, 5, true); }
+void buzzerAlarmStop() { buzzerStop(); }
+
+// true kalau nada alarm sedang berbunyi
+bool buzzerAlarmAktif() { return melodiUlang; }
 
 // Dipanggil tiap loop(): lanjutkan atau selesaikan melodi tanpa blocking.
 void buzzerUpdate() {
@@ -65,7 +80,10 @@ void buzzerUpdate() {
   if ((long)(now - melodiNextMs) < 0) return;
 
   melodiIndex++;
-  if (melodiIndex >= melodiJumlah) { buzzerStop(); return; }
+  if (melodiIndex >= melodiJumlah) {
+    if (!melodiUlang) { buzzerStop(); return; }
+    melodiIndex = 0;
+  }
 
   buzzerNada(melodi[melodiIndex].freq);
   melodiNextMs = now + melodi[melodiIndex].ms;
