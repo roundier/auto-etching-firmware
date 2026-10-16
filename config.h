@@ -130,4 +130,5 @@
 #define MQ135_RLOAD   10.0     // resistor load modul (kOhm)
 #define PIN_ESTOP       8     // estop_sense
 
-#define FW_VERSI  "v0.7.3"
+// Versi firmware. Naikkan setiap perubahan behaviour; lihat LOG.md.
+#define FW_VERSI  "v0.7.4"

@@ -29,6 +29,35 @@ unsigned long langkahTerakhirUs[3] = { 0, 0, 0 };
 // step-loss; DRV8825 lama pakai 400 us dan berisiko kehilangan langkah.
 const unsigned int LANGKAH_INTERVAL_US = 1200;
 
+// ================= KONSTANTA KHUSUS DOSING (file A) =================
+// Dipakai dengan `#ifndef` supaya bila B nanti memindahkannya ke `config.h`
+// (pemilik file B), versi config.h yang menang tanpa konflik define.
+#ifndef PRIME_STEPS
+#define PRIME_STEPS       200      // langkah prime selang sebelum dosing
+#endif
+#ifndef ANTI_DRIP_STEPS
+#define ANTI_DRIP_STEPS    50      // langkah balik DIR setelah pompa selesai
+#endif
+#ifndef DOSE_MIN_ML
+#define DOSE_MIN_ML         1      // guard volume minimum per pompa
+#endif
+#ifndef DOSE_MAX_ML
+#define DOSE_MAX_ML       500      // guard volume maksimum per pompa
+#endif
+
+// Mode tiap pompa. Rekaman ml HARUS hanya terjadi untuk dosis: prime dan
+// anti-drip memang menggerakkan rotor, tapi airnya bukan bagian resep.
+#define POMPA_MODE_DOSIS     0
+#define POMPA_MODE_PRIME     1
+#define POMPA_MODE_ANTIDRIP  2
+uint8_t pompaMode[3] = { POMPA_MODE_DOSIS, POMPA_MODE_DOSIS, POMPA_MODE_DOSIS };
+
+// Dideklarasikan DI SINI (bukan di process.h) karena dipakai oleh motorUpdate()
+// yang dideklarasikan lebih dulu dalam urutan include. Saat jeda, pompa
+// ditahan di posisi sekarang: tidak maju, tapi juga tidak direkam sebagai ml
+// terpompa — sehingga resume melanjutkan dari langkah tersisa, bukan mengulang.
+bool pompaJedaTahanPompa = false;
+
 // Aktifkan / matikan driver.
 //   sleep = true  -> EN = HIGH (TMC2209 mati, motor bebas, driver's CurrentScale idle)
 //   sleep = false -> EN = LOW  (driver aktif, bisa menerima pulsa STEP)
@@ -101,12 +130,13 @@ bool pompaSelesai(int idx) { return !pompaJalan[idx]; }
 float totalMlTerpompa[3] = { 0, 0, 0 };
 
 // Rekam ml yang sudah keluar dari pompa `idx`. Aman dipanggil berkali-kali:
-// hanya berefek kalau pompa sedang jalan.
+// hanya berefek kalau pompa sedang jalan, dan TIDAK merekam untuk mode
+// prime/anti-drip (airnya bukan bagian resep).
 void pompaRekamHasil(int idx) {
   if (idx < 0 || idx > 2) return;
   if (!pompaJalan[idx]) return;
-  if (langkahPerMl[idx] <= 0) return;
-  totalMlTerpompa[idx] += (float)jalanLangkah[idx] / (float)langkahPerMl[idx];
+  if (pompaMode[idx] == POMPA_MODE_DOSIS && langkahPerMl[idx] > 0)
+    totalMlTerpompa[idx] += (float)jalanLangkah[idx] / (float)langkahPerMl[idx];
   pompaJalan[idx] = false;            // rekaman sekaligus berarti pompa berhenti
 }
 
@@ -130,7 +160,18 @@ void pompaStopAll() {
 }
 
 void pompaMulai(int idx, int ml) {
-  if (idx < 0 || idx > 2 || ml <= 0) return;
+  if (idx < 0 || idx > 2) return;
+  if (ml <= 0) return;                       // ml = 0 -> dilewati, bukan macet
+  // Guard volume: mencegah satu preset rusak meledakkan pompa ribuan langkah.
+  if (ml < DOSE_MIN_ML) ml = DOSE_MIN_ML;
+  if (ml > DOSE_MAX_ML) {
+    dbg.print(F("[POMPA] idx "));
+    dbg.print(idx);
+    dbg.print(F(" ml="));
+    dbg.print(ml);
+    dbg.println(F(" > DOSE_MAX, dibatasi"));
+    ml = DOSE_MAX_ML;
+  }
   // Rekaman HARUS di sini sebelum `jalanLangkah` di-reset. Pompa H2O dipakai
   // ulang untuk bilas di fase RINSE tanpa dihentikan lebih dulu, jadi tanpa
   // baris ini sisa ml H2O dari DOSING hilang begitu pompa dijalankan lagi.
@@ -141,6 +182,7 @@ void pompaMulai(int idx, int ml) {
   // bersih di awal setiap proses.
   pompaRekamHasil(idx);
   stepperSleep(false);                // pastikan driver aktif
+  pompaMode[idx]     = POMPA_MODE_DOSIS;
   targetLangkah[idx] = (long)ml * langkahPerMl[idx];
   jalanLangkah[idx]  = 0;
   pompaJalan[idx]    = true;
@@ -151,7 +193,27 @@ void pompaMulai(int idx, int ml) {
   dbg.println(F(" ml"));
 }
 
+// SIAPKAN target tanpa menyalakan pompa.
+//
+// Dipakai saat proses baru mulai: `pompaMulai()` sekaligus menyalakan pompa,
+// padahal proses baru akan melakukan cek stok + prime lebih dulu. Dose baru
+// boleh jalan di tahap DOSIS. Fungsi ini hanya menghitung `targetLangkah`
+// supaya budget durasi bisa dihitung sejak awal.
+void pompaSiapkan(int idx, int ml) {
+  if (idx < 0 || idx > 2) return;
+  if (ml < 0) ml = 0;
+  if (ml > DOSE_MAX_ML) ml = DOSE_MAX_ML;
+  pompaMode[idx]     = POMPA_MODE_DOSIS;
+  targetLangkah[idx] = (ml <= 0) ? 0 : (long)ml * langkahPerMl[idx];
+  jalanLangkah[idx]  = 0;
+  pompaJalan[idx]    = false;
+}
+
 void motorUpdate() {
+  // Jeda / latch E-stop: pompa berhenti di posisi, target & jalanLangkah tetap
+  // utuh sehingga resume melanjutkan (bukan reset atau double-dosis).
+  if (pompaJedaTahanPompa) return;
+
   unsigned long now = micros();
   for (int i = 0; i < 3; i++) {
     if (!pompaJalan[i]) continue;
@@ -178,5 +240,107 @@ void motorUpdate() {
 // tidak menguras catu daya.
 void pompaMatikanTotal() {
   pompaStopAll();                     // merekam ml tersisa sebelum driver dimatikan
+  antiDripAktif = false;
   stepperSleep(true);
+}
+
+// ================= API PROGRESS & PRIME / ANTI-DRIP (file A) =================
+// Dipakai process.h untuk menyelesaikan fase dosing berdasarkan KONDISI
+// (pompa selesai) alih-alih fraksi waktu.
+
+// true bila ketiga pompa tidak sedang berjalan.
+bool pompaSemuaSelesai() {
+  for (int i = 0; i < 3; i++) if (pompaJalan[i]) return false;
+  return true;
+}
+
+// Progres 0..100 persen per pompa (dipakai layer serial & log).
+uint8_t pompaProgres(int idx) {
+  if (idx < 0 || idx > 2) return 0;
+  if (targetLangkah[idx] <= 0) return 100;
+  long v = (jalanLangkah[idx] * 100L) / targetLangkah[idx];
+  if (v < 0) v = 0;
+  if (v > 100) v = 100;
+  return (uint8_t)v;
+}
+
+//.ml target fase ini (dosis terakhir yang diminta), untuk tampilan.
+int pompaTargetMl(int idx) {
+  if (idx < 0 || idx > 2) return 0;
+  if (langkahPerMl[idx] <= 0) return 0;
+  return (int)((targetLangkah[idx] + langkahPerMl[idx] / 2) / langkahPerMl[idx]);
+}
+
+// True bila kalibrasi ml/rotasi sudah diisi user. B belum menyimpan flag
+// eksplisit (butir kontrak B9), jadi dipakai pendekatan lain: nilai default NVS
+// 1.0 ml/rotasi dianggap "belum dikalibrasi".
+bool pompaTerkalibrasi() {
+  for (int i = 0; i < 3; i++) {
+    if (kalibStepperMl[i] >= 0.99f && kalibStepperMl[i] <= 1.01f) return false;
+    if (langkahPerMl[i] <= 0) return false;
+  }
+  return true;
+}
+
+// ---- PRIME -------------------------------------------------------------
+// Pompa peristaltik yang mulai dengan selang kosong hanya menghisap udara:
+// 300 ml bisa keluar jadi 250 ml, atau tidak keluar sama sekali, tanpa error
+// apa pun. Prime mengisi selang dulu dengan PRIME_STEPS langkah per pompa.
+//
+// CATATAN AKURASI: air prime ikut masuk ke tangki proses (volume kecil), jadi
+// setelah priming volume tangki proses sedikit lebih banyak dari resep. Ini
+// diterima karena jauh lebih kecil daripada dosing tanpa prime.
+
+// Prime hanya pompa yang memang akan dipakai (idx yang ml > 0) supaya
+// selang bahan yang tidak dipakai tidak ikut basah.
+void pompaPrimeMulai(const int* pakai, int jumlah) {
+  stepperSleep(false);
+  int n = 0;
+  for (int i = 0; i < 3 && n < jumlah; i++) {
+    if (!pakai[i]) continue;
+    if (pompaJalan[i]) continue;
+    pompaMode[i]     = POMPA_MODE_PRIME;
+    targetLangkah[i] = PRIME_STEPS;
+    jalanLangkah[i]  = 0;
+    pompaJalan[i]    = true;
+    n++;
+  }
+  dbg.print(F("[PRIME] "));
+  dbg.print(n);
+  dbg.print(F(" pompa x "));
+  dbg.print(PRIME_STEPS);
+  dbg.println(F(" langkah"));
+}
+
+// ---- ANTI-DRIP ---------------------------------------------------------
+// Setelah pompa berhenti, tekanan sisa di dalam selang mendorong cairan
+// menetes ke tangki proses -> over-dosis kecil tapi nyata. Solusi: balik DIR
+// sebentar supaya tekanan hilang, lalu kembalikan DIR ke arah sedot.
+bool antiDripAktif = false;
+
+void pompaAntiDripMulai() {
+  antiDripAktif = true;
+  stepperSleep(false);
+  for (int i = 0; i < 3; i++) digitalWrite(PIN_DIR[i], LOW);   // arah balik
+  int n = 0;
+  for (int i = 0; i < 3; i++) {
+    if (targetLangkah[i] <= 0) continue;      // pompa tidak dipakai fase ini
+    pompaMode[i]     = POMPA_MODE_ANTIDRIP;
+    targetLangkah[i] = ANTI_DRIP_STEPS;
+    jalanLangkah[i]  = 0;
+    pompaJalan[i]    = true;
+    n++;
+  }
+  dbg.print(F("[ANTIDRIP] "));
+  dbg.print(n);
+  dbg.print(F(" pompa x "));
+  dbg.print(ANTI_DRIP_STEPS);
+  dbg.println(F(" langkah"));
+}
+
+// Dipanggil sekali setelah semua pompa anti-drip selesai: kembalikan DIR.
+void pompaAntiDripSelesai() {
+  for (int i = 0; i < 3; i++) digitalWrite(PIN_DIR[i], HIGH);  // arah sedot
+  antiDripAktif = false;
+  dbg.println(F("[ANTIDRIP] Selesai, DIR dikembalikan"));
 }

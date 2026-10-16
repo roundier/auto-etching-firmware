@@ -70,6 +70,8 @@ void agitasiSet(int speed) {
   int pwm = (speed <= 0) ? 0 : agitasiPwm(speed);
   analogWrite(PIN_PWA_D1, pwm);
   agitasiDutyAktif = pwm;
+  agitasiDutysekarang = pwm;      // setelan instan ikut mereset state ramp
+  agitasiDutyTarget   = pwm;
 }
 
 // Duty langsung 0..255 (dipakai halaman Kalibrasi Agitasi + test manual)
@@ -77,6 +79,8 @@ void agitasiSetDuty(int duty) {
   int pwm = constrain(duty, 0, 255);
   analogWrite(PIN_PWA_D1, pwm);
   agitasiDutyAktif = pwm;
+  agitasiDutysekarang = pwm;
+  agitasiDutyTarget   = pwm;
 }
 
 void pompaSabunSet(bool on) {
@@ -110,4 +114,54 @@ void dcmotorStopAll() {
   pompaSabunOn  = false;
   pompaLimbahOn = false;
   fanOn         = false;
+  agitasiDutyTarget  = 0;
+  agitasiRampMsSisa  = 0;
+  agitasiDutysekarang = 0;
 }
+
+// ================= RAMP-UP AGITASI (file A) =================
+// Motor DC yang dinyalakan mendadak dari duty 0 ke penuh undergo "shock":
+// arus awal besar, agitasi bisa tersendat, MOSFET cepat panas. Karena itu
+// proses memanggil `agitasiSetRamp()` (bukan `agitasiSet()`) sehingga duty
+// naik bertahap.
+//
+// `agitasiUpdate()` sengaja dipanggil dari `prosesUpdate()` dan BUKAN dari
+// loop() .ino — supaya file milik B tidak perlu disentuh sama sekali.
+
+#ifndef RAMP_AGITASI_MS
+#define RAMP_AGITASI_MS 1000UL
+#endif
+
+int           agitasiDutyTarget   = 0;   // duty tujuan (0..255)
+int           agitasiDutysekarang = 0;   // duty nyata terakhir
+unsigned long agitasiRampMsSisa   = 0;
+
+void agitasiSetRamp(int speed) {
+  agitasiDutyTarget = (speed <= 0) ? 0 : agitasiPwm(speed);
+  agitasiRampMsSisa = RAMP_AGITASI_MS;
+}
+
+void agitasiRampBerhenti() {
+  agitasiDutyTarget   = 0;
+  agitasiRampMsSisa   = 0;
+  agitasiDutysekarang = 0;
+}
+
+bool agitasiRampSelesai() { return agitasiDutysekarang == agitasiDutyTarget; }
+
+// Dipanggil tiap loop dari prosesUpdate(). Duty bergerak ~8 langkah per ms
+// menuju target sehingga total naik ≈ RAMP_AGITASI_MS.
+void agitasiUpdate() {
+  if (agitasiDutysekarang == agitasiDutyTarget) return;
+  if (agitasiDutyTarget > agitasiDutysekarang) {
+    int v = agitasiDutysekarang + max(1, agitasiDutyTarget / 64);
+    agitasiDutysekarang = (v > agitasiDutyTarget) ? agitasiDutyTarget : v;
+  } else {
+    int v = agitasiDutysekarang - max(1, agitasiDutyTarget / 32);
+    agitasiDutysekarang = (v < agitasiDutyTarget) ? agitasiDutyTarget : v;
+  }
+  analogWrite(PIN_PWA_D1, agitasiDutysekarang);
+  agitasiDutyAktif = agitasiDutysekarang;
+}
+
+bool agitasiNyala() { return agitasiDutysekarang > 0; }

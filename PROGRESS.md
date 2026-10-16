@@ -72,13 +72,22 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 - [x] ✅ `kalibStepperMl[]` **dipakai** `pompaMulai()` — dibaca `muatKalibStepper()` saat boot, dihitung di `motorInit()`, ditulis `simpanKalibStepper()` saat BACK dari halaman kalibrasi
 - [x] ✅ Simpan kalibrasi ml/rotasi ke NVS — blob `"kal3"` (`DataKalib3`: versi + `float stepperMl[3]` + CRC32), terpisah dari `"kal"`/`"kal2"`
 - [x] ✅ `STEP_INTERVAL_US` 400 → **1200 µs** (aman 3 pompa paralel, ~830 Hz)
-- [ ] ⬜ Fase `FASE_CEK` pre-flight: validasi sensor & volume tangki
-- [ ] ⬜ Hitung ml yang dibutuhkan = target − sisa cairan di tangki (dari sensor)
-- [ ] ⬜ Cek ketersediaan cairan → `ERR_LEVEL_KURANG` sebelum pompa nyala
-- [ ] ⬜ Selesai dosing berbasis kondisi (saat ini masih berbasis fraksi waktu)
-- [ ] ⬜ Deteksi pompa macet (langkah tidak bertambah > 3 s)
-- [ ] ⬜ Watchdog timeout dosing (90 s)
-- [ ] ⬜ Volume tangki (`VOL_TANGKI_*`) sebagai data, bukan `#define` statis
+- [x] ✅ Pre-flight `TAHAP_CEK`: sensor mati + stok cukup, **sebelum** pompa menyala (`process.h:dosingCekStok()`)
+- [x] ✅ Dosis = **resep** (bukan `target − sisa`); sensor hanya mengesahkan ketersediaan
+- [x] ✅ Cek ketersediaan → `ERR_LEVEL_KURANG` sebelum pompa nyala
+- [x] ✅ Cek ulang setelah prime + guard sumber habis **di tengah** dosing
+- [x] ✅ Selesai dosing **berbasis kondisi** (`pompaSemuaSelesai()`), bukan fraksi waktu
+- [x] ✅ Prime selang (`PRIME_STEPS`) sebelum dosing
+- [x] ✅ Anti-drip: balik `DIR` `ANTI_DRIP_STEPS` setelah pompa selesai
+- [x] ✅ Guard volume `DOSE_MIN_ML` / `DOSE_MAX_ML` per pompa
+- [x] ✅ Watchdog dosing **dinamis** `dosingWatchdogMs()` (2× estimasi + margin, plafon 5 menit)
+- [x] ✅ Deteksi macet/jekot (langkah beku > 3 s)
+- [x] ✅ `pompaSiapkan()`: target langkah tanpa menyalakan pompa (batas durasi diketahui di awal)
+- [x] ✅ Volume tangki `VOL_TANGKI_*` tersedia (dengan `#ifndef`, siap pindah ke `config.h`)
+- [ ] ⚠️ `LANGKAH_INTERVAL_US = 1200` masih asumsi B — **belum diukur**; 0.26 ml/s membuat dosis 300 ml butuh ±19 menit (lihat §11 uji laju step)
+- [ ] ⬜ Ditolak `ERR_POMPA_KALIB` bila pompa belum dikalibrasi (butuh flag `pompaValid[]` di NVS — sisi B)
+- [ ] ⬜ Deteksi macet rotor sungguhan (butuh TMC2209 StallGuard / sensor arus)
+- [ ] ⬜ Wizard kalibrasi gravimetrik + auto-stop non-blocking (UI sisi B, `dosing-design.md` §6)
 
 ---
 
@@ -89,15 +98,17 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 - [x] ✅ Agitasi mati di DRAINING, DOSING, SELESAI, dan saat batal
 - [x] ✅ Field `agitasiSpeed` dapat diubah di preset (1–5)
 - [x] ✅ Field `agitasiDetik` dapat diubah di preset (1–60 s)
-- [ ] ⚠️ `agitasiDetik` **tidak dipakai proses** — hanya tampil di UI (`presetops.h:42`, `ui.h:263`)
-- [ ] ⬜ Siklus agitasi periodik: ON N detik → OFF N detik → ulangi
-- [ ] ⬜ Exhaust fan otomatis menyala selama ETCHING (asap HCl + panas)
-- [ ] ⬜ Exhaust fan menyala selama RINSE_SABUN (busa)
-- [ ] ⬜ Ramp-up speed agitasi 1 s (hindari shok motor)
-- [ ] ⬜ Proteksi suhu: `sensorSuhu(1)` > 70 °C → turunkan speed; > 85 °C → gagal
-- [ ] ⬜ Proteksi gas: `mq135PPM()` > ambang → peringatan di UI
-- [ ] ⬜ Auto-stop /pause saat suhu/gas di luar batas
-- [ ] ⬜ Simpan &Remember durasi fase etching per preset (budget waktu)
+- [x] ✅ `agitasiDetik` **dipakai proses** — jadi siklus agitasi ON/OFF dan batas budget etching
+- [x] ✅ Siklus agitasi periodik: ON N detik → OFF N detik → ulangi (`process.h:FASE_ETCHING`)
+- [x] ✅ Exhaust fan otomatis menyala selama ETCHING (asap HCl + panas)
+- [x] ✅ Exhaust fan menyala selama RINSE_SABUN (busa)
+- [x] ✅ Ramp-up agitasi 1 s (`agitasiSetRamp`/`agitasiUpdate()`, dipanggil dari `prosesUpdate()`)
+- [x] ✅ Proteksi suhu: `sensorSuhu(1)` > 70 °C → badge peringatan; > 85 °C → `ERR_SUHU`
+- [x] ✅ Proteksi gas: `mq135PPM()` > `GAS_AMANG_PPM` → `badgeWarning` + `badgeTeks`
+- [x] ✅ Budget waktu etching dihitung dari preset (`max(agitasiDetik, totalDetik − overhead)`)
+- [ ] ⚠️ Badge gas/suhu belum dirender `ui.h` (nilai `badgeWarning` & `badgeTeks` sudah siap — 1 baris di `gambarProses()`)
+- [ ] ⚠️ Auto-stop saat gas di luar batas (saat ini hanya peringatan, disengaja)
+- [ ] ⬜ Turunkan speed agitasi otomatis saat suhu 70–85 °C (badge dulu, belum auto-turunkan)
 
 ---
 
@@ -108,14 +119,15 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 - [x] ✅ Pompa Limbah mati saat SELESAI & batal
 - [x] ✅ Rinsing: pompa air (stepper #3) 100 ml + agitasi (`process.h:43-45`)
 - [x] ✅ `fanSet(false)` saat SELESAI
-- [ ] ⚠️ DRAINING/RINSING **selesai berbasis fraksi waktu total preset** (75%/88%/100%), bukan durasi per sub-fase
-- [ ] ⚠️ Pompa air **(belum pernah dipakai di proses**, hanya di kalibrasi (`process.h:50,113`)
-- [ ] ⬜ Durasi tetap per sub-fase: `T_DRAINING_MS`, `T_RINSE_AIR_MS`, `T_RINSE_SABUN_MS`, `T_DRAIN_AKHIR_MS`
-- [ ] ⬜ Guard overfill: `sensorPersen[LIMBAH] > 95%` → stop + alarm
-- [ ] ⬜ Pompa air sabun menyala di fase RINSE_SABUN (belum ada sama sekali)
-- [ ] ⬜ Deteksi "tangki proses kosong" (opsional, bila sensor ditambahkan)
-- [ ] ⬜ Histeresis/debounce level agar pompa tidak thrash
-- [ ] ⬜ Volume bilasan air & sab customize dari preset
+- [x] ✅ DRAINING/RINSING selesai berdasarkan **durasi tetap**, bukan fraksi preset
+- [x] ✅ Durasi tetap per sub-fase: `T_DRAINING_MS`, `T_RINSE_AIR_MS`, `T_RINSE_SABUN_MS`, `T_DRAIN_AKHIR_MS`
+- [x] ✅ Guard overfill: `sensorPersen[LIMBAH] > LOKASI_LIMBAH_MAKS` (95%) → `ERR_OVERFLOW`
+- [x] ✅ Pompa air **(stepper #3) dipakai di proses** untuk bilasan `ML_BILASAN`
+- [x] ✅ Pompa air sabun menyala di sub-fase BILAS_SABUN + fan untuk busa
+- [x] ✅ Drain akhir setelah bilas → SELESAI
+- [ ] ⚠️ Volume bilasan air & sab belum bisa diubah dari preset (konstanta `ML_BILASAN`, sisi B)
+- [ ] ⚠️ Histeresis/debounce level agar pompa tidak thrash (sisi B: `sensor.h`)
+- [ ] ⬜ Deteksi "tangki proses kosong" (opsional, perlu sensor tambahan — GPIO 21/47 bebas)
 
 ---
 
@@ -140,6 +152,9 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 - [x] ✅ Jeda (`prosesToggleJeda`) ikut mematikan output, bukan hanya timer (v0.7.3) - **bug nyata yang sudah lama ada**: agitasi/pompa/fan tetap berputar selama jeda. Sekarang `semuaAktuatorMati()` saat jeda, `aksiFase()` saat lanjut (shadow state v0.7.2 membuat ikon di layar proses ikut benar)
 - [x] ✅ Deteksi kegagalan sensor saat proses (DS18B20/touch) → abort aman (v0.7.3) - `sensorMati[]` (v0.6.5) dipakai di `prosesUpdate()`: sensor mati saat proses jalan → `prosesGagal(ERR_SENSOR)`. Level dipakai untuk keputusan dosing dan cek akhir, jadi sensor mati berarti keputusan diambil dari data palsu. Hanya saat proses aktif & tidak dijeda
 - [x] ✅ Fail-safe saat OLED/PCF8574 hilang (v0.7.3) - **sebagian sudah terpenuhi sejak dulu**: E-stop di `PIN_8` GPIO langsung, tidak lewat I2C, jadi tetap mematikan aktuator walau seluruh bus I2C mati. Yang ditambahkan: `>status` melaporkan `i2cGagalBerturut`, jumlah recovery, dan status watchdog. Peringatan tidak bisa tampil di OLED justru karena OLED itulah yang hilang - jadi lewat Serial
+- [x] ⚠️ Timeout per fase jadi **dinamis** (v0.7.4) — `TIMEOUT_FASE_MS[]` konstanta diganti `batasTimeoutFase()`: dosing = `dosingWatchdogMs()` (2× estimasi + margin, plafon 5 menit), sub-fase lain = 2× budgetnya. Angka tetap akan membunuh dosis yang sah
+- [x] ✅ Jeda sekarang **menahan pompa di posisi** (v0.7.4) — `pompaJedaTahanPompa` membuat `motorUpdate()` berhenti tanpa merekam ml, sehingga resume melanjutkan dari langkah tersisa. Versi v0.7.3 memakai `semuaAktuatorMati()` yang **merekam** ml dan mengulang bagian yang sudah keluar
+- [ ] ⚠️ `prosesGagal()` belum punya kode `ERR_SUMBER_HABIS` & `ERR_POMPA_KALIB` (butuh enum di `data.h` — sisi B); sekarang dipetakan ke `ERR_LEVEL_KURANG`
 
 ---
 
@@ -225,6 +240,13 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 - [ ] ⬜ Uji siklus agitasi (ON/OFF berulang) + fan
 - [ ] ⬜ Uji stabilitas level readout saat kabel AWG30 30 cm
 - [ ] ⬜ **Seluruh uji wajib pakai air biasa dulu**, baru larutan encer
+- [ ] ⬜ **[v0.7.4] Uji laju step 10 000 langkah** — catat waktu aktual vs teoritis (`10 000 × LANGKAH_INTERVAL_US / 1000`), deteksi miss step. Targetkan ml/s ≥ 0.6 agar dosis 300 ml < 8 menit
+- [ ] ⬜ **[v0.7.4] Uji prime & anti-drip** — tidak ada air keluar sebelum dosing; tidak ada tetesan setelah pompa selesai
+- [ ] ⬜ **[v0.7.4] Uji cek stok** — tangki sengaja dikosongkan → proses harus berhenti di CEK STOK sebelum pompa nyala
+- [ ] ⬜ **[v0.7.4] Uji jeda di tengah dosing** — resume melanjutkan, tidak mengulang ml yang sudah keluar
+- [ ] ⬜ **[v0.7.4] Uji siklus agitasi + fan** — agitasi ON/OFF sesuai `agitasiDetik`, fan menyala di ETCHING & BILAS SABUN
+- [ ] ⬜ **[v0.7.4] Uji progress bar** — bar mencapai 100% tepat saat layar selesai (bukan macet di tengah)
+- [ ] ⬜ **[v0.7.4] Uji kalibrasi gravimetrik** — 3 pompa × 3 ulangan × 50 ml, repeatability ≤ 3%, error ≤ 5%
 
 ---
 
@@ -234,17 +256,17 @@ Legenda: ✅ **Sudah ada & berfungsi** · ⚠️ **Ada tapi belum fungsional/ter
 |---|---|---|---|
 | GPIO & Hardware | 14 | 0 | 0 |
 | Modul UI | 23 | 0 | 4 |
-| Modul Dosing | 12 | 0 | 7 |
-| Modul Etching | 5 | 1 | 8 |
-| Modul Draining & Rinsing | 5 | 2 | 6 |
-| Modul Emergency Stop | 19 | 0 | 0 |
+| Modul Dosing | 24 | 1 | 3 |
+| Modul Etching | 13 | 2 | 1 |
+| Modul Draining & Rinsing | 11 | 2 | 1 |
+| Modul Emergency Stop | 20 | 2 | 0 |
 | Sensor & Kalibrasi | 21 | 0 | 1 |
 | Penyimpanan & Data | 11 | 0 | 0 |
 | Infrastruktur | 9 | 0 | 1 |
 | Dokumentasi | 7 | 0 | 0 |
-| Uji Hardware | 0 | 0 | 10 |
+| Uji Hardware | 0 | 0 | 17 |
 
-**Total: 126 ✅ · 3 ⚠️ · 37 ⬜** (dihitung ulang dari daftar item per bab di atas,
+**Total: 153 ✅ · 7 ⚠️ · 28 ⬜** (dihitung ulang dari daftar item per bab di atas,
 bukan disalin manual — tabel ringkasan sebelumnya meleset karena beberapa item
 pernah diubah status tanpa tabel ikut diperbarui)
 

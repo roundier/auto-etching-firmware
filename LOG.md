@@ -5,6 +5,96 @@ Setiap versi di-backup ke folder `backup/vX.Y.Z_tanggal/` sebelum perubahan dila
 
 ---
 
+## [2026-10-16] v0.7.4 — Dosis berbasis kondisi, durasi tetap drain/rinse, proteksi etching (Bab 3/4/5)
+
+Branch `a/gelombang-1` (Orang A). Berkembang di atas merge `test/merge-b` yang
+mengambil pekerjaan Orang B (v0.7.3). Tidak ada file milik B yang diubah —
+hanya `process.h`, `motor.h`, `dcmotor.h` + satu baris `FW_VERSI` di `config.h`.
+
+**Perubahan inti: fase tidak lagi memakai fraksi waktu**
+
+Sebelumnya perpindahan fase memakai `faseDariFrac()` (10% dosing, 75%
+etching, 88% draining dari `totalDetik`). Akibatnya pompa bisa **masih
+berjalan saat fase sudah ETCHING**, atau selesai jauh sebelum fase berikutnya —
+HCl menetes ke tangki proses saat sudah mulai diaduk. Sekarang:
+
+| Fase | Selesai karena |
+|---|---|
+| DOSING | **pompa benar-benar selesai** (`pompaSemuaSelesai()`), bukan timer |
+| ETCHING | budget waktu etching habis |
+| DRAINING | durasi tetap `T_DRAINING_MS` + guard overfill |
+| RINSING | durasi tetap, 3 sub-fase (air → sabun → drain akhir) |
+
+Sub-fase ditangani variabel `prosesTahap` + `prosesTahapNama()` (CEK STOK,
+PRIME, DOSIS, ANTI-DRIP, SIKLUS AGITASI, BUANG, BILAS AIR, BILAS SABUN, BUANG
+AKHIR) — sengaja **bukan enum baru**, supaya `ui.h` yang mengindeks
+`namaFase[]` dan array 6 elemen tetap utuh tanpa perubahan.
+
+**DOSING (Bab 3)**
+- Pre-flight `TAHAP_CEK`: sensor mati? pompa terkalibrasi? stok cukup
+  (`target > tersedia + TOLERANSI_STOK`) — **gagal sebelum pompa menyala**
+- `PRIME_STEPS` langkah per pompa sebelum dosing (selang kosong = udara)
+- `DOSE_MIN_ML` / `DOSE_MAX_ML` guard volume per pompa
+- `pompaSiapkan()`: target langkah dihitung tanpa menyalakan pompa, supaya
+  budget durasi bisa diketahui sejak awal
+- `ANTI_DRIP_STEPS`: balik DIR setelah pompa selesai supaya tekanan sisa tidak
+  menetes (anti over-dosis)
+- Rekaman ml hanya untuk mode dosis — prime & anti-drip **tidak** menambah
+  `totalMlTerpompa[]`
+- Guard `ERR_LEVEL_KURANG` saat sumber habis **di tengah** dosing
+- Watchdog **dinamis** `dosingWatchdogMs() = 2 × estimasi + margin` (dengan
+  plafon 5 menit). Angka tetap 90 s akan membunuh dosis yang sah — dengan
+  `LANGKAH_INTERVAL_US = 1200`, 300 ml butuh ratusan detik
+
+**ETCHING (Bab 4)**
+- Siklus agitasi periodik ON/OFF sepanjang `agitasiDetik` (dulu field ini hanya
+  tampil di UI, tidak dipakai proses)
+- Exhaust fan menyala selama ETCHING (asam + panas) — sebelumnya `fanSet()`
+  hanya pernah dipanggil `false`
+- Ramp-up agitasi `RAMP_AGITASI_MS` (`agitasiSetRamp`/`agitasiUpdate`),
+  dipanggil dari `prosesUpdate()` supaya `.ino` tidak perlu disentuh
+- Proteksi suhu: > 70 °C badge peringatan, > 85 °C `ERR_SUHU`
+- Proteksi gas MQ-135 → badge `badgeWarning` + `badgeTeks` (UI belum
+  merender; lihat "Perlu dari B")
+
+**DRAINING & RINSING (Bab 5)**
+- Durasi tetap per sub-fase, bukan fraksi preset
+- Guard overfill `sensorPersen[LIMBAH] > LOKASI_LIMBAH_MAKS` (95%) →
+  `ERR_OVERFLOW`
+- Pompa air sabun (TB6612FNG) akhirnya dipakai di proses, di fase BILAS SABUN
+- Bilasan air lewat stepper dengan `ML_BILASAN`
+
+**Progress bar jujur**
+`prosesFraksiTotal()` dihitung dari budget fase yang benar-benar dijalankan
+(`budgetSelesaiMs` + waktu fase berjalan) dibagi total budget — bukan lagi
+`prosesAkumMs / totalDetik`. Budget etching =
+`max(agitasiDetik, totalDetik − (dosing + drain + rinse))` supaya intentions
+preset tidak hilang.
+
+**Jeda**
+Jeda sekarang menahan pompa di posisi (`pompaJedaTahanPompa` →
+`motorUpdate()` return), **tanpa** merekam ml, sehingga resume melanjutkan dari
+langkah tersisa — bukan mengulang dosis. `aksiFase(FASE_RINSING)` diberi guard
+`if (!pompaJalan[2])` supaya resume tidak mendose air dua kali.
+
+**Konstanta A**
+Semua konstanta proses dideklarasikan dengan `#ifndef` di `process.h`
+(`TOLERANSI_STOK`, `VOL_TANGKI_*`, `T_*`, `ML_BILASAN`, `SUHU_MAKS_*`,
+`GAS_AMANG_PPM`, …) supaya bisa dipindah ke `config.h` (file B) tanpa konflik.
+
+**Perlu dari B (1 perubahan kecil, opsional)**
+`ui.h` belum menampilkan sub-fase & badge. Cukup satu baris di `gambarProses()`:
+menampilkan `prosesTahapNama()` di baris status dan `badgeTeks` kalau
+`badgeWarning == true`. Tanpa itu semua fitur Bab 4 tetap berjalan, hanya
+tidak terlihat di layar.
+
+**Belum dikerjakan**
+Deteksi macet rotor sungguhan (butuh StallGuard/sensor arus), teks
+`namaError[]` yang lebih spesifik per penyebab, dan `ERR_POMPA_KALIB` (butuh
+`pompaValid[]` di NVS — sisi B).
+
+---
+
 ## [2026-10-16] v0.7.3 — Fail-safe: prosesGagal, latch E-stop, HAL_ALARM (Bab 6)
 
 Menutup 9 item Bab 6. Satu item ditandai stale dan satu lagi sengaja di-skip
