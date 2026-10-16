@@ -5,6 +5,38 @@ Setiap versi di-backup ke folder `backup/vX.Y.Z_tanggal/` sebelum perubahan dila
 
 ---
 
+## [2026-10-16] docs — Kontrak Bab 0 (pembagian kerja A ↔ B)
+
+Project dikerjakan berdua dengan pembagian per bab. Bab 3–6 (dosing, etching,
+draining/rinsing, emergency stop) menjadi milik Orang A dengan file `process.h`,
+`motor.h`, `dcmotor.h`, `buzzer.h`; sisanya milik Orang B.
+
+**Dokumen baru: `kontrak-bab0.md`** — mengunci antarmuka sebelum ada kode yang
+ditulis, supaya dua orang tidak mengedit file yang sama.
+
+Isi kontrak:
+- **Blok 1 (`config.h`, B):** pin map TMC2209 (hapus `PIN_SLP1/2/3`, tambah
+  `PIN_TMC_EN`/`PIN_TMC_PDN`, STEP 38/40/42, DIR 48/39/41) + 40 konstanta baru
+  (mikrostep, timing dosing, prime, volume tangki, durasi drain/rinse, proteksi).
+- **Blok 2 (`data.h`/`ui.h`, B):** `HAL_ALARM` + `gambarAlarm()`.
+  **Deviasi dari `PROCESS.md` §3:** enum `FaseProses`/`KodeError` dan state
+  proses **tetap di `process.h`**, tidak dipindah ke `data.h` — mengurangi
+  dependensi lintas file, `ui.h` tetap bisa membacanya karena sudah di-include
+  setelah `process.h`.
+- **Blok 3 (`.ino`, B):** blok E-stop pindah ke baris pertama `loop()` dan cukup
+  memanggil `prosesGagal()` (hapus 5 baris stop duplikat), plus mengganti
+  `delay()` di halaman kalibrasi motor jadi non-blocking.
+- **Blok 4:** 12 item milik B dari Bab 3–6 yang file-nya di sisi B (mis.
+  `hitungUlang()` di `presetops.h`, `DataKalib` versi 2 di `storage.h`).
+- **Blok 5:** daftar fungsi milik A yang tidak boleh di-rename (dipanggil file B)
+  dan API baru yang bisa dipakai `ui.h`.
+- Checklist compile manual (Arduino IDE, board ESP32-S3) & smoke test per
+  gelombang; urutan branch per gelombang + PR.
+
+**Tidak ada kode yang diubah.**
+
+---
+
 ## [2026-10-15] docs — Sinkronisasi dokumentasi + desain dosing baru
 
 **Perubahan hanya pada dokumen — tidak ada kode yang diubah, tidak ada versi

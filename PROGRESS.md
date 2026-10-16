@@ -257,6 +257,7 @@ gravimetrik, error budget, prime/anti-drip, dan daftar koreksi desain
 - [x] ✅ `PROCESS.md` — rencana detail 5 modul proses + cara kerja + pin map TMC2209
 - [x] ✅ `PROGRESS.md` — checklist status implementasi (dokumen ini)
 - [x] ✅ `dosing-design.md` — desain rinci modul dosing: matematika ml→langkah, kalibrasi gravimetrik, error budget, prime/anti-drip, koreksi desain
+- [x] ✅ `kontrak-bab0.md` — kontrak antarmuka A ↔ B: blok kode siap tempel untuk `config.h`/`data.h`/`.ino`, API yang tidak boleh diubah, checklist compile per gelombang
 - [ ] ⬜ Update `SUMMARY.md` agar sinkron dengan pin map TMC2209 & fitur baru
 - [ ] ⬜ Koreksi `PROCESS.md` §6 sesuai `dosing-design.md` §2 (logika ml terbalik, watchdog dinamis, nama "deteksi macet")
 - [ ] ⬜ Update `LOG.md` / naikkan versi firmware untuk setiap fitur baru
